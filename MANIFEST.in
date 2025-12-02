@@ -1,3 +1,4 @@
 include README.md
-recursive-include tenancy/templates *
-recursive-include tenancy/static *
+include LICENSE
+recursive-include tenancy *.py
+recursive-include tenancy/migrations *.py

@@ -3,22 +3,45 @@ requires = ["setuptools>=61.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "tenancy"
+name = "django-row-tenancy"
 version = "0.1.0"
-description = "A reusable Django app named tenancy."
+description = "Lightweight row-level multi-tenancy for Django with MySQL"
 readme = "README.md"
 requires-python = ">=3.8"
-license = { text = "MIT" }
+license = {text = "MIT"}
 authors = [
-  { name = "Your Name" }
+    {name = "Artopium Mike", email = "artopium@gmail.com"}
+]
+keywords = ["django", "multi-tenancy", "saas", "tenancy", "mysql"]
+classifiers = [
+    "Environment :: Web Environment",
+    "Framework :: Django",
+    "Framework :: Django :: 3.2",
+    "Framework :: Django :: 4.0",
+    "Framework :: Django :: 5.0",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
 ]
 dependencies = [
-  "django>=4.0"
+    "Django>=3.2",
 ]
 
 [project.urls]
 Homepage = "https://github.com/ArtoLabs/tenancy.git"
+Documentation = "https://github.com/ArtoLabs/tenancy.git"
 Repository = "https://github.com/ArtoLabs/tenancy.git"
+Issues = "https://github.com/ArtoLabs/tenancy.git"
 
 [tool.setuptools.packages.find]
 include = ["tenancy*"]
+
+[tool.setuptools.package-data]
+tenancy = ["migrations/*.py"]
