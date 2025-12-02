@@ -1,6 +1,6 @@
 from django.db import models
 from .managers import TenantManager
-
+from .models import Tenant
 
 class TenantMixin(models.Model):
     """
@@ -18,6 +18,8 @@ class TenantMixin(models.Model):
         related_name='%(app_label)s_%(class)s_set',
         verbose_name='Tenant',
         db_index=True,
+        null=True,  # ← Added: Allows NULL in database
+        blank=True,  # ← Added: Allows blank in forms
     )
 
     objects = TenantManager()
