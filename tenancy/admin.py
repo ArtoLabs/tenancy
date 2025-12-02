@@ -16,7 +16,7 @@ class TenantAdminSite(AdminSite):
         """
         Only allow access if user is staff AND a tenant context exists.
         """
-        return request.user.is_active and request.user.is_staff and hasattr(request, 'tenant') and request.tenant is not None
+        return request.user.is_active and (request.user.is_staff or request.user.is_superuser) and hasattr(request, 'tenant') and request.tenant is not None
 
 
 class SuperAdminSite(AdminSite):
