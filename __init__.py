@@ -1,6 +1,3 @@
-"""
-Django Row-Level Multi-Tenancy Package
-"""
 default_app_config = 'tenancy.apps.TenancyConfig'
 
 from .models import Tenant
