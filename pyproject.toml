@@ -44,10 +44,7 @@ Issues = "https://github.com/ArtoLabs/tenancy.git"
 include = ["tenancy*"]
 
 [tool.setuptools.package-data]
-your_app = ["templates/**/*"]
-
-[tool.setuptools.package-data]
-tenancy = ["migrations/*.py"]
+tenancy = ["templates/**/*"]
 
 [tool.setuptools]
 include-package-data = true
