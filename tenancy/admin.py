@@ -53,9 +53,11 @@ class SuperAdminSite(AdminSite):
 
     def has_permission(self, request):
         # Strict: only superusers on main domain (or without tenant context)
-        return request.user.is_active and request.user.is_superuser and (
-            not hasattr(request, 'tenant') or request.tenant is None
-        )
+        return (request.user.is_active and request.user.is_superuser)
+
+        #         and (
+        #     not hasattr(request, 'tenant') or request.tenant is None
+        # ))
 
     def get_urls(self):
         urls = super().get_urls()
