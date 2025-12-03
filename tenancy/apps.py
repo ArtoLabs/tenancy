@@ -6,7 +6,7 @@ class TenancyConfig(AppConfig):
     name = 'tenancy'
     verbose_name = 'Multi-Tenancy'
 
-    def ready(self):
-        # Import system checks so that Django registers them.
-        from . import checks  # noqa
-        return
+    # def ready(self):
+    #     # Import system checks so that Django registers them.
+    #     from . import checks  # noqa
+    #     return
