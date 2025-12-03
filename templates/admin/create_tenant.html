@@ -1,0 +1,16 @@
+{% extends "admin/base_site.html" %}
+{% load i18n %}
+{% block content %}
+  <div class="module aligned">
+    <h1>{{ title }}</h1>
+    <form method="post" novalidate>
+      {% csrf_token %}
+      <table>
+        {{ form.as_table }}
+      </table>
+      <div class="submit-row">
+        <input type="submit" value="{% trans 'Create tenant' %}" class="default">
+      </div>
+    </form>
+  </div>
+{% endblock %}
