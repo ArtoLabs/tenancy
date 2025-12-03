@@ -3,7 +3,7 @@ from django.contrib.auth import get_user_model
 from django.db import transaction
 from django.apps import apps
 from tenancy.models import Tenant
-from tenancy.admin import TenantAdminMixin
+from tenancy.mixins import TenantMixin
 import getpass
 
 User = get_user_model()
@@ -73,14 +73,15 @@ class Command(BaseCommand):
             email=admin_email,
             password=admin_password,
             is_staff=True,
-            is_superuser=False
+            is_superuser=False,
+            tenant=tenant
         )
         self.stdout.write(self.style.SUCCESS(f'Created tenant admin user "{admin_user.username}"'))
 
         # --- Step 4: Detect all models that use TenantAdminMixin ---
         tenanted_models = [
             model for model in apps.get_models()
-            if any(issubclass(base, TenantAdminMixin) for base in model.__mro__)
+            if any(issubclass(base, TenantMixin) for base in model.__mro__)
         ]
 
         # --- Step 5: Assign tenant to all objects in these models where tenant is null ---

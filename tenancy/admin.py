@@ -24,13 +24,29 @@ class TenantAdminSite(AdminSite):
     index_title = "Welcome to your admin panel"
 
     def has_permission(self, request):
-        if (request.user.is_active and request.user.is_superuser):
-            return True
-        if not (request.user.is_active and request.user.is_staff):
+        """Allow staff users who belong to the current tenant"""
+        if not request.user.is_active:
             return False
 
-        # Tenant users must belong to the current tenant
-        return getattr(request, 'tenant', None) is not None and request.user.tenant == request.tenant
+        # Superusers always have access
+        if request.user.is_superuser:
+            return True
+
+        # Staff users need to belong to current tenant
+        if not request.user.is_staff:
+            return False
+
+        # Check if user belongs to current tenant
+        tenant = getattr(request, 'tenant', None)
+        if tenant is None:
+            return False
+
+        # If User model has tenant field, check it
+        if hasattr(request.user, 'tenant'):
+            return request.user.tenant == tenant
+
+        # Otherwise allow staff users (for projects without tenant-aware users)
+        return True
 
     def get_app_list(self, request):
         """
@@ -38,7 +54,7 @@ class TenantAdminSite(AdminSite):
         """
         app_list = super().get_app_list(request)
         for app in app_list:
-            # filter out Tenant model from the returned models
+            # Filter out Tenant model from the returned models
             app['models'] = [m for m in app['models'] if m.get('object_name') != 'Tenant']
         return app_list
 
@@ -53,12 +69,8 @@ class SuperAdminSite(AdminSite):
     index_title = "System Management"
 
     def has_permission(self, request):
-        # Strict: only superusers on main domain (or without tenant context)
-        return (request.user.is_active and request.user.is_superuser)
-
-        #         and (
-        #     not hasattr(request, 'tenant') or request.tenant is None
-        # ))
+        """Only superusers can access super admin"""
+        return request.user.is_active and request.user.is_superuser
 
     def get_urls(self):
         urls = super().get_urls()
@@ -90,7 +102,7 @@ class SuperAdminSite(AdminSite):
                 except TenantProvisioningError as exc:
                     messages.error(request, f"Failed to create tenant: {exc}")
                 except Exception as exc:
-                    messages.exception(request, f"Unexpected error provisioning tenant: {exc}")
+                    messages.error(request, f"Unexpected error provisioning tenant: {exc}")
                 else:
                     messages.success(
                         request,
@@ -99,7 +111,6 @@ class SuperAdminSite(AdminSite):
                             'Tenant admin login: http://%(domain)s/manage/'
                         ) % {'tenant': tenant.name, 'user': user.username, 'domain': tenant.domain}
                     )
-                    # Redirect to tenant change list in super admin
                     return redirect('admin:index')
         else:
             form = TenantCreationForm()
@@ -109,11 +120,10 @@ class SuperAdminSite(AdminSite):
             'title': 'Create Tenant',
             'form': form,
         }
-        # Render a simple admin form template (create this template in templates/admin/create_tenant.html)
         return render(request, 'admin/tenancy/create_tenant.html', context)
 
 
-# instantiate the admin sites
+# Instantiate the admin sites
 tenant_admin_site = TenantAdminSite(name='tenant_admin')
 super_admin_site = SuperAdminSite(name='super_admin')
 
@@ -151,28 +161,74 @@ class TenantAdmin(admin.ModelAdmin):
 super_admin_site.register(User, BaseUserAdmin)
 
 
-# TenantAdminMixin for tenant-scoped models (register your tenant models in tenant_admin_site)
+# TenantAdminMixin for tenant-scoped models
 class TenantAdminMixin:
     """
     Use this mixin for any ModelAdmin that should be tenant-scoped and appear in TenantAdminSite.
+    Register your models like:
+        @admin.register(YourModel, site=tenant_admin_site)
+        class YourModelAdmin(TenantAdminMixin, admin.ModelAdmin):
+            ...
     """
+
     def get_queryset(self, request):
         qs = super().get_queryset(request)
+        # Filter by tenant if the model has a tenant field
         if hasattr(request, 'tenant') and request.tenant:
             if hasattr(qs.model, 'tenant'):
                 return qs.filter(tenant=request.tenant)
         return qs
 
     def save_model(self, request, obj, form, change):
-        if hasattr(obj, 'tenant') and not getattr(obj, 'tenant_id', None):
-            obj.tenant = request.tenant
+        # Auto-assign tenant to new objects
+        if hasattr(obj, 'tenant') and not change:
+            if not getattr(obj, 'tenant_id', None):
+                obj.tenant = request.tenant
         super().save_model(request, obj, form, change)
 
     def has_module_permission(self, request):
+        """Allow access if user has tenant context"""
+        if not super().has_module_permission(request):
+            return False
         return hasattr(request, 'tenant') and request.tenant is not None
 
     def get_exclude(self, request, obj=None):
-        exclude = super().get_exclude(request, obj) or []
-        if hasattr(self.model, 'tenant'):
-            return list(exclude) + ['tenant']
+        """Hide tenant field from forms since it's auto-assigned"""
+        exclude = list(super().get_exclude(request, obj) or [])
+        if hasattr(self.model, 'tenant') and 'tenant' not in exclude:
+            exclude.append('tenant')
         return exclude
+
+
+# Optional: Register User model in tenant admin for tenant-level user management
+@admin.register(User, site=tenant_admin_site)
+class TenantUserAdmin(BaseUserAdmin):
+    """
+    User admin for tenant site - shows only users belonging to current tenant
+    """
+
+    def get_queryset(self, request):
+        qs = super().get_queryset(request)
+        if hasattr(request, 'tenant') and request.tenant:
+            if hasattr(User, 'tenant'):
+                return qs.filter(tenant=request.tenant)
+        return qs
+
+    def save_model(self, request, obj, form, change):
+        if hasattr(obj, 'tenant') and not change:
+            if not getattr(obj, 'tenant_id', None):
+                obj.tenant = request.tenant
+        super().save_model(request, obj, form, change)
+
+    def get_fieldsets(self, request, obj=None):
+        fieldsets = super().get_fieldsets(request, obj)
+        # Hide tenant field if it exists
+        if hasattr(User, 'tenant'):
+            fieldsets = list(fieldsets)
+            for name, data in fieldsets:
+                if 'fields' in data:
+                    fields = list(data['fields'])
+                    if 'tenant' in fields:
+                        fields.remove('tenant')
+                        data['fields'] = tuple(fields)
+        return fieldsets
