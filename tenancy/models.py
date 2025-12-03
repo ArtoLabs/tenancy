@@ -64,3 +64,17 @@ class Tenant(models.Model):
         """
         from .context import clear_current_tenant
         clear_current_tenant()
+
+
+
+class TenantUserMixin(models.Model):
+    tenant = models.ForeignKey(
+        Tenant,
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name='users'
+    )
+
+    class Meta:
+        abstract = True

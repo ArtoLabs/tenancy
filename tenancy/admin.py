@@ -28,7 +28,8 @@ class TenantAdminSite(AdminSite):
             return False
         if request.user.is_superuser:
             return True
-        return hasattr(request, 'tenant') and request.tenant is not None
+        # Tenant users must belong to the current tenant
+        return getattr(request, 'tenant', None) is not None and request.user.tenant == request.tenant
 
     def get_app_list(self, request):
         """
