@@ -1,7 +1,7 @@
 # tenancy/migrations/002_add_tenant_to_user.py
 from django.db import migrations, models
 from django.conf import settings
-from .models import Tenant
+from tenancy.models import Tenant
 
 
 def add_tenant_fk_to_default_user(apps, schema_editor):
