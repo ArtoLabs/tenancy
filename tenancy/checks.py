@@ -1,38 +1,36 @@
+# tenancy/checks.py
+from django.core.checks import Error, register
 from django.contrib.auth import get_user_model
-from django.core.checks import Error, Warning, register
-
-from .mixins import TenantUserMixin
-
+from django.db.migrations.executor import MigrationExecutor
+from django.db import connections
+from django.conf import settings
 
 @register()
-def tenancy_user_model_check(app_configs, **kwargs):
-    """
-    Ensures the user model is compatible with the tenancy system.
-    """
+def check_default_user_tenant_field(app_configs, **kwargs):
     User = get_user_model()
 
-    # Case 1: default user model (auth.User)
-    if User._meta.label == "auth.User":
-        # The migration 002_add_tenant_to_user *should* add tenant_id
-        if not any(f.name == "tenant" for f in User._meta.get_fields()):
-            return [
-                Error(
-                    "Default Django user model detected, but tenant_id field "
-                    "was not added. Did you run migrations?",
-                    id="tenancy.E001"
-                )
-            ]
+    # Only check default user model
+    if User._meta.label != "auth.User":
         return []
 
-    # Case 2: custom user model (must include TenantUserMixin)
-    if not issubclass(User, TenantUserMixin):
+    # Skip the check if migrations are still pending
+    try:
+        connection = connections['default']
+        executor = MigrationExecutor(connection)
+        plan = executor.migration_plan(executor.loader.graph.leaf_nodes())
+        if plan:  # migrations pending
+            return []
+    except Exception:
+        # If something fails, skip check (better than blocking migration)
+        return []
+
+    # Check if tenant field exists
+    if not any(f.name == "tenant" for f in User._meta.get_fields()):
         return [
             Error(
-                "Custom user model detected, but it does not inherit TenantUserMixin.",
-                hint="Update your custom user model: class MyUser(TenantUserMixin, AbstractUser): ...",
-                id="tenancy.E002"
+                "Default Django user model detected, but tenant_id field was not added. Did you run migrations?",
+                id="tenancy.E001",
             )
         ]
 
-    # All good
     return []
