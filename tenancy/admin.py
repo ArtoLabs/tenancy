@@ -45,7 +45,7 @@ class SuperAdminSite(AdminSite):
     """
     Site for managing system-wide objects such as Tenant model and creating tenants.
     """
-    index_template = "tenancy/admin/super_index.html"
+    index_template = "admin/tenancy/super_index.html"
     site_header = "Super Administration"
     site_title = "Super Admin"
     index_title = "System Management"
@@ -96,7 +96,7 @@ class SuperAdminSite(AdminSite):
                         ) % {'tenant': tenant.name, 'user': user.username, 'domain': tenant.domain}
                     )
                     # Redirect to tenant change list in super admin
-                    return redirect('admin:tenancy_tenant_changelist')
+                    return redirect('admin:index')
         else:
             form = TenantCreationForm()
 
