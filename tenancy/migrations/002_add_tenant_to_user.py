@@ -6,7 +6,6 @@ def add_tenant_fk_to_default_user(apps, schema_editor):
     UserModel = apps.get_model('auth', 'User')
     TenantModel = apps.get_model('tenancy', 'Tenant')
 
-    # Only patch default user
     if UserModel._meta.label != 'auth.User':
         return
 
@@ -16,9 +15,8 @@ def add_tenant_fk_to_default_user(apps, schema_editor):
         blank=True,
         on_delete=django.db.models.deletion.PROTECT,
         related_name='users',
-        db_column='tenant_id'
+        db_column='tenant_id',
     )
-
     field.set_attributes_from_name('tenant')
     schema_editor.add_field(UserModel, field)
 
@@ -32,6 +30,8 @@ def remove_tenant_fk_from_default_user(apps, schema_editor):
 
 
 class Migration(migrations.Migration):
+    atomic = False  # <-- important for MySQL
+
     dependencies = [
         ('tenancy', '0001_initial'),
         ('auth', '0012_alter_user_first_name_max_length'),
