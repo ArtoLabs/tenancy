@@ -106,7 +106,7 @@ class SuperAdminSite(AdminSite):
             'form': form,
         }
         # Render a simple admin form template (create this template in templates/admin/create_tenant.html)
-        return render(request, 'admin/create_tenant.html', context)
+        return render(request, 'tenancy/admin/create_tenant.html', context)
 
 
 # instantiate the admin sites
