@@ -45,3 +45,6 @@ include = ["tenancy*"]
 
 [tool.setuptools.package-data]
 tenancy = ["migrations/*.py"]
+
+[tool.setuptools]
+include-package-data = true

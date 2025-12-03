@@ -1,104 +1,123 @@
 from django.contrib import admin
 from django.contrib.admin import AdminSite
-from django.contrib.auth.models import User
+from django.contrib.auth import get_user_model
 from django.contrib.auth.admin import UserAdmin as BaseUserAdmin
-from django import forms
+from django.shortcuts import render, redirect
+from django.urls import path
+from django.contrib import messages
+from django.utils.html import format_html
+from django.utils.translation import gettext as _
 from .models import Tenant
+from .forms import TenantCreationForm
+from .services import TenantProvisioner, TenantProvisioningError
+
+User = get_user_model()
 
 
 class TenantAdminSite(AdminSite):
     """
-    Custom admin site that enforces tenant isolation.
-    Tenants can only see their own data, not other tenants or the Tenant model.
+    Admin site used by tenants (shown at tenant domain, e.g. tenant.example.com/manage/).
+    This site should NEVER expose the Tenant model.
     """
     site_header = "Tenant Administration"
     site_title = "Tenant Admin"
     index_title = "Welcome to your admin panel"
 
     def has_permission(self, request):
-        """
-        Allow access if user is staff AND has a tenant context.
-        Superusers can also access any tenant admin.
-        """
         if not (request.user.is_active and request.user.is_staff):
             return False
-
-        # Superusers can access any tenant admin
         if request.user.is_superuser:
             return True
-
-        # Regular staff must have a tenant context
         return hasattr(request, 'tenant') and request.tenant is not None
+
+    def get_app_list(self, request):
+        """
+        Remove the Tenant model from app list for tenant site to avoid leakage.
+        """
+        app_list = super().get_app_list(request)
+        for app in app_list:
+            # filter out Tenant model from the returned models
+            app['models'] = [m for m in app['models'] if m.get('object_name') != 'Tenant']
+        return app_list
 
 
 class SuperAdminSite(AdminSite):
     """
-    Super admin site for managing all tenants and system-wide settings.
-    Only accessible without a tenant context (i.e., on the main domain).
+    Site for managing system-wide objects such as Tenant model and creating tenants.
     """
+    index_template = "tenancy/admin/super_index.html"
     site_header = "Super Administration"
     site_title = "Super Admin"
     index_title = "System Management"
 
     def has_permission(self, request):
-        """
-        Only allow superusers on the main domain (no tenant context).
-        """
+        # Strict: only superusers on main domain (or without tenant context)
         return request.user.is_active and request.user.is_superuser and (
-                    not hasattr(request, 'tenant') or request.tenant is None)
+            not hasattr(request, 'tenant') or request.tenant is None
+        )
+
+    def get_urls(self):
+        urls = super().get_urls()
+        custom_urls = [
+            path('create-tenant/', self.admin_view(self.create_tenant_view), name='create-tenant'),
+        ]
+        return custom_urls + urls
+
+    def create_tenant_view(self, request):
+        """
+        Admin view that displays TenantCreationForm and provisions the tenant using TenantProvisioner.
+        """
+        if request.method == 'POST':
+            form = TenantCreationForm(request.POST)
+            if form.is_valid():
+                tenant_data = {
+                    'name': form.cleaned_data['name'],
+                    'domain': form.cleaned_data['domain'],
+                    'schema_name': form.cleaned_data['schema_name'],
+                    'is_active': form.cleaned_data.get('is_active', True),
+                }
+                admin_data = {
+                    'username': form.cleaned_data['admin_username'],
+                    'email': form.cleaned_data['admin_email'],
+                    'password': form.cleaned_data['admin_password'],
+                }
+                try:
+                    tenant, user = TenantProvisioner.create_tenant(tenant_data, admin_data, run_migrations=False)
+                except TenantProvisioningError as exc:
+                    messages.error(request, f"Failed to create tenant: {exc}")
+                except Exception as exc:
+                    messages.exception(request, f"Unexpected error provisioning tenant: {exc}")
+                else:
+                    messages.success(
+                        request,
+                        _(
+                            'Tenant "%(tenant)s" created and admin user "%(user)s" provisioned. '
+                            'Tenant admin login: http://%(domain)s/manage/'
+                        ) % {'tenant': tenant.name, 'user': user.username, 'domain': tenant.domain}
+                    )
+                    # Redirect to tenant change list in super admin
+                    return redirect('admin:tenancy_tenant_changelist')
+        else:
+            form = TenantCreationForm()
+
+        context = {
+            **self.each_context(request),
+            'title': 'Create Tenant',
+            'form': form,
+        }
+        # Render a simple admin form template (create this template in templates/admin/create_tenant.html)
+        return render(request, 'admin/create_tenant.html', context)
 
 
-# Create the custom admin sites
+# instantiate the admin sites
 tenant_admin_site = TenantAdminSite(name='tenant_admin')
 super_admin_site = SuperAdminSite(name='super_admin')
-
-
-class TenantCreationForm(forms.ModelForm):
-    """
-    Form for creating a new tenant with an admin user.
-    """
-    admin_username = forms.CharField(
-        max_length=150,
-        required=True,
-        help_text="Username for the tenant's admin user"
-    )
-    admin_email = forms.EmailField(
-        required=True,
-        help_text="Email for the tenant's admin user"
-    )
-    admin_password = forms.CharField(
-        widget=forms.PasswordInput,
-        required=True,
-        help_text="Password for the tenant's admin user"
-    )
-    admin_password_confirm = forms.CharField(
-        widget=forms.PasswordInput,
-        required=True,
-        label="Confirm password"
-    )
-
-    class Meta:
-        model = Tenant
-        fields = ['name', 'domain', 'schema_name', 'is_active']
-
-    def clean_admin_password_confirm(self):
-        password1 = self.cleaned_data.get('admin_password')
-        password2 = self.cleaned_data.get('admin_password_confirm')
-        if password1 and password2 and password1 != password2:
-            raise forms.ValidationError("Passwords don't match")
-        return password2
-
-    def clean_admin_username(self):
-        username = self.cleaned_data.get('admin_username')
-        if User.objects.filter(username=username).exists():
-            raise forms.ValidationError("A user with this username already exists")
-        return username
 
 
 @admin.register(Tenant, site=super_admin_site)
 class TenantAdmin(admin.ModelAdmin):
     """
-    Admin interface for managing tenants - only in super admin.
+    Simple Tenant ModelAdmin for the super admin (no provisioning logic here).
     """
     list_display = ['name', 'domain', 'schema_name', 'is_active', 'created_at', 'view_tenant_admin']
     list_filter = ['is_active', 'created_at']
@@ -118,69 +137,22 @@ class TenantAdmin(admin.ModelAdmin):
         }),
     )
 
-    def get_form(self, request, obj=None, **kwargs):
-        """
-        Use special form for creating new tenants that includes admin user creation.
-        """
-        if obj is None:  # Creating new tenant
-            kwargs['form'] = TenantCreationForm
-        return super().get_form(request, obj, **kwargs)
-
-    def save_model(self, request, obj, form, change):
-        """
-        When creating a new tenant, also create an admin user for them.
-        """
-        is_new = obj.pk is None
-        super().save_model(request, obj, form, change)
-
-        if is_new and isinstance(form, TenantCreationForm):
-            # Create the tenant admin user
-            user = User.objects.create_user(
-                username=form.cleaned_data['admin_username'],
-                email=form.cleaned_data['admin_email'],
-                password=form.cleaned_data['admin_password'],
-            )
-            user.is_staff = True
-            user.is_superuser = False  # Not a superuser, just staff
-            user.save()
-
-            # Add success message
-            from django.contrib import messages
-            messages.success(
-                request,
-                f'Tenant "{obj.name}" created successfully! '
-                f'Admin user "{user.username}" has been created. '
-                f'They can log in at: http://{obj.domain}/manage/'
-            )
-
     def view_tenant_admin(self, obj):
-        """
-        Provide a link to the tenant's admin panel.
-        """
-        from django.utils.html import format_html
-        return format_html(
-            '<a href="http://{}/manage/" target="_blank">Open Tenant Admin</a>',
-            obj.domain
-        )
+        return format_html('<a href="http://{}/manage/" target="_blank">Open Tenant Admin</a>', obj.domain)
 
     view_tenant_admin.short_description = 'Tenant Admin'
 
 
-# Register User model to super admin
+# Register User on super admin so superusers can manage system users
 super_admin_site.register(User, BaseUserAdmin)
 
 
-# Mixin to automatically register models to tenant admin
+# TenantAdminMixin for tenant-scoped models (register your tenant models in tenant_admin_site)
 class TenantAdminMixin:
     """
-    Mixin for ModelAdmin classes that should appear in tenant admin.
-    Automatically filters querysets by current tenant.
+    Use this mixin for any ModelAdmin that should be tenant-scoped and appear in TenantAdminSite.
     """
-
     def get_queryset(self, request):
-        """
-        Filter queryset to only show current tenant's data.
-        """
         qs = super().get_queryset(request)
         if hasattr(request, 'tenant') and request.tenant:
             if hasattr(qs.model, 'tenant'):
@@ -188,23 +160,14 @@ class TenantAdminMixin:
         return qs
 
     def save_model(self, request, obj, form, change):
-        """
-        Automatically set tenant when saving.
-        """
-        if hasattr(obj, 'tenant') and not obj.tenant_id:
+        if hasattr(obj, 'tenant') and not getattr(obj, 'tenant_id', None):
             obj.tenant = request.tenant
         super().save_model(request, obj, form, change)
 
     def has_module_permission(self, request):
-        """
-        Only show in tenant admin if tenant context exists.
-        """
         return hasattr(request, 'tenant') and request.tenant is not None
 
     def get_exclude(self, request, obj=None):
-        """
-        Exclude tenant field from forms - it's set automatically.
-        """
         exclude = super().get_exclude(request, obj) or []
         if hasattr(self.model, 'tenant'):
             return list(exclude) + ['tenant']
