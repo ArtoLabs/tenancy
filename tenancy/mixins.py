@@ -1,11 +1,11 @@
 from django.db import models
 from .managers import TenantManager
-from .models import Tenant
+
 
 
 class TenantUserMixin(models.Model):
     tenant = models.ForeignKey(
-        Tenant,
+        "tenancy.Tenant",  # Use string reference
         null=True,
         blank=True,
         on_delete=models.PROTECT,
@@ -27,7 +27,7 @@ class TenantMixin(models.Model):
     """
 
     tenant = models.ForeignKey(
-        Tenant,
+        "tenancy.Tenant",  # Use string reference
         on_delete=models.CASCADE,
         related_name='%(app_label)s_%(class)s_set',
         verbose_name='Tenant',
