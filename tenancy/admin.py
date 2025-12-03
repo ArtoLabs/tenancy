@@ -24,10 +24,11 @@ class TenantAdminSite(AdminSite):
     index_title = "Welcome to your admin panel"
 
     def has_permission(self, request):
+        if (request.user.is_active and request.user.is_superuser):
+            return True
         if not (request.user.is_active and request.user.is_staff):
             return False
-        if request.user.is_superuser:
-            return True
+
         # Tenant users must belong to the current tenant
         return getattr(request, 'tenant', None) is not None and request.user.tenant == request.tenant
 
