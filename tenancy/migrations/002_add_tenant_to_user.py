@@ -2,44 +2,44 @@
 from django.db import migrations, models
 import django.db.models.deletion
 
+def add_tenant_fk_to_default_user(apps, schema_editor):
+    UserModel = apps.get_model('auth', 'User')
+    TenantModel = apps.get_model('tenancy', 'Tenant')
 
-def skip_if_custom_user(apps, schema_editor):
-    """
-    Helper to skip the migration if a custom user model is used.
-    """
+    # Only patch default user
+    if UserModel._meta.label != 'auth.User':
+        return
+
+    field = models.ForeignKey(
+        TenantModel,
+        null=True,
+        blank=True,
+        on_delete=django.db.models.deletion.PROTECT,
+        related_name='users',
+        db_column='tenant_id'
+    )
+
+    field.set_attributes_from_name('tenant')
+    schema_editor.add_field(UserModel, field)
+
+
+def remove_tenant_fk_from_default_user(apps, schema_editor):
     UserModel = apps.get_model('auth', 'User')
     if UserModel._meta.label != 'auth.User':
-        # Custom user, skip migration
-        return False
-    return True
+        return
+    field = UserModel._meta.get_field('tenant')
+    schema_editor.remove_field(UserModel, field)
 
 
 class Migration(migrations.Migration):
-
     dependencies = [
         ('tenancy', '0001_initial'),
-        ('auth', '0012_alter_user_first_name_max_length'),  # adjust for your Django version
+        ('auth', '0012_alter_user_first_name_max_length'),
     ]
 
     operations = [
-        # Conditionally add tenant FK only if default user model is used
-        migrations.AddField(
-            model_name='user',
-            name='tenant',
-            field=models.ForeignKey(
-                to='tenancy.Tenant',
-                null=True,
-                blank=True,
-                on_delete=django.db.models.deletion.PROTECT,
-                related_name='users',
-            ),
+        migrations.RunPython(
+            add_tenant_fk_to_default_user,
+            remove_tenant_fk_from_default_user
         ),
     ]
-
-    # Optional: skip for custom user
-    def apply(self, project_state, schema_editor, collect_sql=False):
-        UserModel = project_state.apps.get_model('auth', 'User')
-        if UserModel._meta.label != 'auth.User':
-            # Skip adding field
-            return project_state
-        return super().apply(project_state, schema_editor, collect_sql)
