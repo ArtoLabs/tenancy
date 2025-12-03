@@ -1,12 +1,13 @@
-# tenancy/checks.py
 from django.core.checks import Error, register
 from django.contrib.auth import get_user_model
 from django.db.migrations.executor import MigrationExecutor
 from django.db import connections
-from django.conf import settings
 
 @register()
 def check_default_user_tenant_field(app_configs, **kwargs):
+    """
+    System check to ensure the default Django user has a 'tenant' field.
+    """
     User = get_user_model()
 
     # Only check default user model
@@ -21,10 +22,10 @@ def check_default_user_tenant_field(app_configs, **kwargs):
         if plan:  # migrations pending
             return []
     except Exception:
-        # If something fails, skip check (better than blocking migration)
+        # Skip check if something fails (safe fallback)
         return []
 
-    # Check if tenant field exists
+    # Check if 'tenant' field exists on User
     if not any(f.name == "tenant" for f in User._meta.get_fields()):
         return [
             Error(
