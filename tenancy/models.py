@@ -1,5 +1,6 @@
 from django.db import models
 from django.utils.translation import gettext_lazy as _
+from django.contrib.auth.models import AbstractUser
 
 
 class Tenant(models.Model):
@@ -64,3 +65,13 @@ class Tenant(models.Model):
         """
         from .context import clear_current_tenant
         clear_current_tenant()
+
+
+class TenantUser(AbstractUser):
+    tenant = models.ForeignKey(
+        Tenant,
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="users"
+    )
