@@ -25,25 +25,25 @@ class TenantAdminSite(AdminSite):
 
     def has_permission(self, request):
         """Allow staff users who belong to the current tenant"""
-        # if not request.user.is_active:
-        #     return False
-        #
-        # # Superusers always have access
-        # if request.user.is_superuser:
-        #     return True
-        #
-        # # Staff users need to belong to current tenant
-        # if not request.user.is_staff:
-        #     return False
-        #
-        # # Check if user belongs to current tenant
-        # tenant = getattr(request, 'tenant', None)
-        # if tenant is None:
-        #     return False
-        #
-        # # If User model has tenant field, check it
-        # if hasattr(request.user, 'tenant'):
-        #     return request.user.tenant == tenant
+        if not request.user.is_active:
+            return False
+
+        # Superusers always have access
+        if request.user.is_superuser:
+            return True
+
+        # Staff users need to belong to current tenant
+        if not request.user.is_staff:
+            return False
+
+        # Check if user belongs to current tenant
+        tenant = getattr(request, 'tenant', None)
+        if tenant is None:
+            return False
+
+        # If User model has tenant field, check it
+        if hasattr(request.user, 'tenant'):
+            return request.user.tenant == tenant
 
         # Otherwise allow staff users (for projects without tenant-aware users)
         return True

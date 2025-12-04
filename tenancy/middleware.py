@@ -26,6 +26,11 @@ class TenantMiddleware(MiddlewareMixin):
             request.tenant = tenant
             logger.info(f"Tenant '{tenant.name}' (domain: {hostname}) set for request")
 
+            # Debug logging for admin access (only if user is available)
+            if request.path.startswith('/manage/') and hasattr(request, 'user'):
+                user_info = f"{request.user.username} (tenant: {getattr(request.user, 'tenant', 'N/A')})" if request.user.is_authenticated else 'Anonymous'
+                logger.info(f"Admin access attempt - User: {user_info}, Request Tenant: {tenant.name}")
+
         except Tenant.DoesNotExist:
             logger.error(
                 f"No active tenant found for domain: {hostname}. "
@@ -85,16 +90,11 @@ class TenantMiddleware(MiddlewareMixin):
                 status=500
             )
 
-        #     # In TenantMiddleware, after setting request.tenant
-        # if request.path.startswith('/manage/'):
-        #     logger.error(
-        #         f"Admin access - User: {request.user.username if request.user.is_authenticated else 'Anonymous'}, Tenant: {tenant.name}, User has tenant attr: {hasattr(request.user, 'tenant')}")
-
     def process_response(self, request, response):
         clear_current_tenant()
         return response
 
     def process_exception(self, request, exception):
         clear_current_tenant()
-        logger.error(f"Exception in request processing: {exception}")
+        logger.exception(f"Exception in request processing: {exception}")
         return None
