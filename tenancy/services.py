@@ -42,6 +42,7 @@ class TenantProvisioner:
         ]
 
         for model in cloneable_models:
+            print(f"Cloning defaults for model: {model.__name__}")
             logger.info(f"Cloning defaults for model: {model.__name__}")
             model.clone_defaults_for_new_tenant(tenant.id)
 
