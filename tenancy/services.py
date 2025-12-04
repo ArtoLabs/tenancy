@@ -28,7 +28,8 @@ class TenantProvisioner:
         user = User.objects.create_user(
             username=admin_data['username'],
             email=admin_data.get('email', ''),
-            password=admin_data['password']
+            password=admin_data['password'],
+            tenant=tenant,
         )
         user.is_staff = True
         user.is_superuser = False
