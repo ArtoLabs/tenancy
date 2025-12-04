@@ -85,11 +85,16 @@ class TenantMiddleware(MiddlewareMixin):
                 status=500
             )
 
+            # In TenantMiddleware, after setting request.tenant
+        if request.path.startswith('/manage/'):
+            logger.error(
+                f"Admin access - User: {request.user.username if request.user.is_authenticated else 'Anonymous'}, Tenant: {tenant.name}, User has tenant attr: {hasattr(request.user, 'tenant')}")
+
     def process_response(self, request, response):
         clear_current_tenant()
         return response
 
     def process_exception(self, request, exception):
         clear_current_tenant()
-        logger.exception(f"Exception in request processing: {exception}")
+        logger.error(f"Exception in request processing: {exception}")
         return None

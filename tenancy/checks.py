@@ -32,9 +32,8 @@ def check_user_model_tenant_field(app_configs, **kwargs):
         return [
             Error(
                 "Default Django user model detected but no 'tenant' field found. "
-                "Please either:\n"
-                "1) Create a custom user model with TenantUserMixin and run migrations, or\n"
-                "2) Set AUTH_USER_MODEL = 'tenancy.TenantUser' in settings before running migrations.",
+                "You MUST:\n"
+                "Create a custom user model with TenantUserMixin and run migrations.",
                 id="tenancy.E001",
             )
         ]
