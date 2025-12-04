@@ -81,13 +81,11 @@ from tenancy.models import Tenant
 tenant1 = Tenant.objects.create(
     name='Acme Corp',
     domain='acme.example.com',  # Production domain
-    schema_name='acme'
 )
 
 tenant2 = Tenant.objects.create(
     name='Widgets Inc',
     domain='widgets.example.com',  # Production domain
-    schema_name='widgets'
 )
 ```
 
@@ -127,13 +125,11 @@ from tenancy.models import Tenant
 tenant1 = Tenant.objects.create(
     name='Tenant 1',
     domain='tenant1.localhost',
-    schema_name='tenant1'
 )
 
 tenant2 = Tenant.objects.create(
     name='Tenant 2', 
     domain='tenant2.localhost',
-    schema_name='tenant2'
 )
 ```
 
@@ -179,7 +175,6 @@ ALLOWED_HOSTS = ['tenant1.local', 'tenant2.local', 'admin.local', 'localhost']
 Tenant.objects.create(
     name='Tenant 1',
     domain='tenant1.local',
-    schema_name='tenant1'
 )
 ```
 
@@ -291,13 +286,11 @@ from tenancy.utils import tenant_context
 tenant1 = Tenant.objects.create(
     name='Acme Corp',
     domain='tenant1.localhost',
-    schema_name='acme'
 )
 
 tenant2 = Tenant.objects.create(
     name='Widgets Inc',
     domain='tenant2.localhost',
-    schema_name='widgets'
 )
 
 # Create products for tenant1
@@ -436,7 +429,7 @@ def my_view(request):
 
 ### Models
 
-- **Tenant**: Core tenant model with fields: name, domain, schema_name, is_active
+- **Tenant**: Core tenant model with fields: name, domain, is_active
 
 ### Mixins
 

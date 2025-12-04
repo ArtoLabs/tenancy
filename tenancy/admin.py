@@ -101,7 +101,6 @@ class SuperAdminSite(AdminSite):
                 tenant_data = {
                     'name': form.cleaned_data['name'],
                     'domain': form.cleaned_data['domain'],
-                    'schema_name': form.cleaned_data['schema_name'],
                     'is_active': form.cleaned_data.get('is_active', True),
                 }
                 admin_data = {
@@ -145,14 +144,14 @@ class TenantAdmin(admin.ModelAdmin):
     """
     Simple Tenant ModelAdmin for the super admin (no provisioning logic here).
     """
-    list_display = ['name', 'domain', 'schema_name', 'is_active', 'created_at', 'view_tenant_admin']
+    list_display = ['name', 'domain', 'is_active', 'created_at', 'view_tenant_admin']
     list_filter = ['is_active', 'created_at']
-    search_fields = ['name', 'domain', 'schema_name']
+    search_fields = ['name', 'domain']
     readonly_fields = ['created_at', 'updated_at']
 
     fieldsets = (
         ('Basic Information', {
-            'fields': ('name', 'domain', 'schema_name')
+            'fields': ('name', 'domain')
         }),
         ('Status', {
             'fields': ('is_active',)

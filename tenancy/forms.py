@@ -13,7 +13,6 @@ class TenantCreationForm(forms.Form):
     # Tenant fields
     name = forms.CharField(max_length=255)
     domain = forms.CharField(max_length=255, help_text="Hostname for tenant (e.g. tenant.example.com)")
-    schema_name = forms.CharField(max_length=63, help_text="Schema or slug to identify tenant")
     is_active = forms.BooleanField(required=False, initial=True)
 
     # Admin/owner user fields
@@ -34,12 +33,6 @@ class TenantCreationForm(forms.Form):
         if User.objects.filter(username=username).exists():
             raise forms.ValidationError("A user with this username already exists")
         return username
-
-    def clean_schema_name(self):
-        schema_name = self.cleaned_data.get('schema_name')
-        if Tenant.objects.filter(schema_name=schema_name).exists():
-            raise forms.ValidationError("A tenant with this schema_name already exists")
-        return schema_name
 
     def clean_domain(self):
         domain = self.cleaned_data.get('domain')

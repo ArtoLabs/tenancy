@@ -15,7 +15,6 @@ class Command(BaseCommand):
     def add_arguments(self, parser):
         parser.add_argument('--name', type=str, help="Tenant name")
         parser.add_argument('--domain', type=str, help="Tenant domain (e.g. tenant1.localhost)")
-        parser.add_argument('--schema', type=str, help="Tenant schema_name")
         parser.add_argument('--admin_username', type=str, help="Tenant admin username")
         parser.add_argument('--admin_email', type=str, help="Tenant admin email")
         parser.add_argument('--admin_password', type=str, help="Tenant admin password (will prompt if not provided)")
@@ -29,13 +28,11 @@ class Command(BaseCommand):
         # --- Step 0: Prompt for missing tenant info ---
         name = options['name'] or input("Enter tenant name: ")
         domain = options['domain'] or input("Enter tenant domain (e.g. tenant1.localhost): ")
-        schema = options['schema'] or input("Enter tenant schema_name (e.g. default): ")
 
         # --- Step 1: Create the first tenant ---
         tenant = Tenant.objects.create(
             name=name,
             domain=domain,
-            schema_name=schema,
             is_active=True
         )
         self.stdout.write(self.style.SUCCESS(f'Created tenant "{tenant.name}"'))

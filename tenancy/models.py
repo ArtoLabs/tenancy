@@ -18,13 +18,6 @@ class Tenant(models.Model):
         verbose_name=_('Domain'),
         help_text=_('Primary domain for this tenant (e.g., acme.example.com)')
     )
-    schema_name = models.CharField(
-        max_length=63,
-        unique=True,
-        db_index=True,
-        verbose_name=_('Schema Name'),
-        help_text=_('Internal identifier for the tenant')
-    )
     is_active = models.BooleanField(
         default=True,
         verbose_name=_('Active'),
@@ -45,7 +38,6 @@ class Tenant(models.Model):
         ordering = ['name']
         indexes = [
             models.Index(fields=['domain']),
-            models.Index(fields=['schema_name']),
         ]
 
     def __str__(self):

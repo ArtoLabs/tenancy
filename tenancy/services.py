@@ -1,9 +1,10 @@
 import logging
 from django.contrib.auth import get_user_model
 from django.db import transaction
-from django.core.management import call_command
-from django.conf import settings
+from django.apps import apps
+
 from .models import Tenant
+from .mixins import CloneForTenantMixin
 
 User = get_user_model()
 logger = logging.getLogger(__name__)
@@ -21,7 +22,6 @@ class TenantProvisioner:
         tenant = Tenant.objects.create(
             name=tenant_data['name'],
             domain=tenant_data['domain'],
-            schema_name=tenant_data['schema_name'],
             is_active=tenant_data.get('is_active', True)
         )
 
@@ -34,5 +34,15 @@ class TenantProvisioner:
         user.is_staff = True
         user.is_superuser = False
         user.save()
+
+        # After creating tenant and admin user:
+        cloneable_models = [
+            model for model in apps.get_models()
+            if issubclass(model, CloneForTenantMixin)
+        ]
+
+        for model in cloneable_models:
+            logger.info(f"Cloning defaults for model: {model.__name__}")
+            model.clone_defaults_for_new_tenant(tenant.id)
 
         return tenant, user

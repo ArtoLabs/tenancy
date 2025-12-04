@@ -1,4 +1,6 @@
 from django.db import models
+from django.forms.models import model_to_dict
+
 from .managers import TenantManager
 from .models import Tenant
 
@@ -68,3 +70,30 @@ class TenantMixin(models.Model):
         Helper method to identify if a model uses the tenant mixin.
         """
         return hasattr(cls, 'tenant')
+
+
+class CloneForTenantMixin:
+    CLONE_EXCLUDE_FIELDS = ("id", "pk")
+
+    @classmethod
+    def get_template_queryset(cls):
+        """
+        Returns a queryset of template rows.
+        Default: all rows with tenant=None
+        """
+        return cls.objects.filter(tenant__isnull=True)
+
+    def clone_for_tenant(self, new_tenant_id, overrides=None):
+        overrides = overrides or {}
+        data = model_to_dict(self, exclude=self.CLONE_EXCLUDE_FIELDS)
+        data["tenant_id"] = new_tenant_id
+        data.update(overrides)
+        return self.__class__.objects.create(**data)
+
+    @classmethod
+    def clone_defaults_for_new_tenant(cls, new_tenant_id):
+        new_instances = []
+        for template in cls.get_template_queryset():
+            new_instances.append(template.clone_for_tenant(new_tenant_id))
+        return new_instances
+
