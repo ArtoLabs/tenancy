@@ -262,19 +262,106 @@ class TenantUserAdmin(BaseUserAdmin):
         return fieldsets
 
 
+# @admin.register(User, site=super_admin_site)
+# class SuperUserUserAdmin(BaseUserAdmin):
+#
+#     list_display = BaseUserAdmin.list_display + ('tenant_display',)
+#
+#     def tenant_display(self, obj):
+#         if hasattr(obj, "tenant") and obj.tenant:
+#             return f"{obj.tenant.id} – {obj.tenant.name}"
+#         return "-"
+#     tenant_display.short_description = "Tenant"
+#
+#     def get_readonly_fields(self, request, obj=None):
+#         readonly = list(super().get_readonly_fields(request, obj))
+#         if hasattr(User, "tenant") and "tenant" not in readonly:
+#             readonly.append("tenant")
+#         return readonly
+
+
+# --- DEBUGGING PATCH: drop this in your tenancy/admin.py ---
+
+from django.contrib import admin as django_admin
+from django.http import HttpResponse
+
+# Print registrations at import time so we know what's registered
+print("=== tenancy.admin import time debug ===")
+print("Default admin.site registered models:", sorted([m.__name__ for m in django_admin.site._registry.keys()]))
+print("super_admin_site registered models:", sorted([m.__name__ for m in super_admin_site._registry.keys()]))
+print("tenant_admin_site registered models:", sorted([m.__name__ for m in tenant_admin_site._registry.keys()]))
+print("User model class:", User.__name__, "module:", getattr(User, '__module__', None))
+print("Does User have tenant attribute at import:", hasattr(User, 'tenant'))
+print("=======================================")
+
+
 @admin.register(User, site=super_admin_site)
 class SuperUserUserAdmin(BaseUserAdmin):
+    """
+    Debuggable UserAdmin for the super admin site.
+    """
 
-    list_display = BaseUserAdmin.list_display + ('tenant_display',)
+    # Keep the tenant column static (BaseUserAdmin usually defines list_display)
+    # Note: BaseUserAdmin.list_display is a tuple; we build on it defensively.
+    try:
+        list_display = tuple(BaseUserAdmin.list_display) + ('tenant_display',)
+    except Exception:
+        # Fallback in case BaseUserAdmin changes shape in your environment
+        list_display = ('username', 'email', 'first_name', 'last_name', 'is_staff', 'tenant_display')
+
+    def __init__(self, *args, **kwargs):
+        # This prints when Django constructs the ModelAdmin instance (at admin registration time).
+        print(f"[DEBUG] SuperUserUserAdmin.__init__ called for model: {getattr(self, 'model', None)}")
+        super().__init__(*args, **kwargs)
 
     def tenant_display(self, obj):
-        if hasattr(obj, "tenant") and obj.tenant:
-            return f"{obj.tenant.id} – {obj.tenant.name}"
-        return "-"
+        # Called for each row when Django renders the column
+        val = getattr(obj, 'tenant', None)
+        print(f"[DEBUG] tenant_display called for user={getattr(obj, 'username', None)} tenant={val}")
+        if val is None:
+            return "-"
+        # If Tenant has name or id show both if available
+        name = getattr(val, 'name', None)
+        tid = getattr(val, 'id', None)
+        return f"{tid or '-'}{(' – ' + str(name)) if name else ''}"
     tenant_display.short_description = "Tenant"
+
+    def get_queryset(self, request):
+        print("[DEBUG] SuperUserUserAdmin.get_queryset called; request.user:", request.user)
+        qs = super().get_queryset(request)
+        try:
+            print("[DEBUG] queryset count (unfiltered):", qs.count())
+        except Exception as exc:
+            print("[DEBUG] could not count queryset:", exc)
+        return qs
+
+    def changelist_view(self, request, extra_context=None):
+        """
+        This is a guaranteed hook that runs when the changelist is visited.
+        Use it to print what Django will render.
+        """
+        print("=== SuperUserUserAdmin.changelist_view ===")
+        print("request.user:", request.user, "is_superuser:", getattr(request.user, 'is_superuser', None))
+        print("Admin object (self):", type(self), "model:", getattr(self, 'model', None))
+        print("self.list_display:", getattr(self, 'list_display', None))
+        # Show which ModelAdmin instance is registered for User on the super_admin_site
+        registered = super_admin_site._registry.get(User)
+        print("Registered ModelAdmin for User on super_admin_site:", type(registered), registered is self)
+        # Also show default admin.site registration (maybe another registration is shadowing)
+        registered_default = django_admin.site._registry.get(User)
+        print("Registered ModelAdmin for User on default admin.site:", type(registered_default))
+        print("===========================================")
+
+        # Call through to normal changelist behaviour
+        return super().changelist_view(request, extra_context=extra_context)
 
     def get_readonly_fields(self, request, obj=None):
         readonly = list(super().get_readonly_fields(request, obj))
         if hasattr(User, "tenant") and "tenant" not in readonly:
             readonly.append("tenant")
+        print("[DEBUG] get_readonly_fields ->", readonly)
         return readonly
+
+# If you previously also called `super_admin_site.register(User, SuperUserUserAdmin)` elsewhere,
+# remove that second call. Having both decorator and register call will cause AlreadyRegistered.
+print("[DEBUG] After decorating SuperUserUserAdmin, super_admin_site._registry contains:", super_admin_site._registry.get(User))
