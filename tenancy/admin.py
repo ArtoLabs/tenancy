@@ -264,11 +264,6 @@ class TenantUserAdmin(BaseUserAdmin):
 
 @admin.register(User, site=super_admin_site)
 class SuperUserUserAdmin(BaseUserAdmin):
-    """
-    User admin for the super admin site.
-    Shows all users across tenants and adds a tenant column.
-    """
-
     def tenant_display(self, obj):
         if hasattr(obj, "tenant") and obj.tenant:
             return f"{obj.tenant.id} – {obj.tenant.name}"
@@ -283,7 +278,6 @@ class SuperUserUserAdmin(BaseUserAdmin):
 
     def get_queryset(self, request):
         qs = super().get_queryset(request)
-        # Optionally: superuser sees all users across tenants
         return qs
 
     def get_readonly_fields(self, request, obj=None):
@@ -291,5 +285,6 @@ class SuperUserUserAdmin(BaseUserAdmin):
         if hasattr(User, "tenant") and "tenant" not in readonly:
             readonly.append("tenant")
         return readonly
+
 
 
