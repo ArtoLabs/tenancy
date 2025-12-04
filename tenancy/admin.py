@@ -232,7 +232,6 @@ class TenantAdminMixin:
         return super().formfield_for_foreignkey(db_field, request, **kwargs)
 
 
-
 @admin.register(User, site=tenant_admin_site)
 class TenantUserAdmin(BaseUserAdmin):
     """
@@ -240,67 +239,70 @@ class TenantUserAdmin(BaseUserAdmin):
     Superusers additionally see the tenant ID in the changelist.
     """
 
-    def get_queryset(self, request):
-        qs = super().get_queryset(request)
-        if hasattr(request, 'tenant') and request.tenant:
-            if hasattr(User, 'tenant'):
-                return qs.filter(tenant=request.tenant)
-        return qs
-
-    # -------------------------------
-    # 1) Show tenant only to superusers
-    # -------------------------------
-    def get_list_display(self, request):
-        base = list(super().get_list_display(request))
-
-        if request.user.is_superuser and hasattr(User, "tenant"):
-            # Avoid duplicates if Django rebuilds list_display dynamically
-            if "tenant_display" not in base:
-                base.append("tenant_display")
-
-        return base
-
+    # 1️⃣ Add tenant_display method
     def tenant_display(self, obj):
-        """Readable tenant identifier for display."""
+        print(f"[DEBUG] tenant_display called for user {obj.username}, tenant={getattr(obj, 'tenant', None)}")
         if not hasattr(obj, "tenant") or obj.tenant is None:
             return "-"
         return f"{obj.tenant.id} – {obj.tenant.name}"
     tenant_display.short_description = "Tenant"
 
-    # ---------------------------------------
-    # 2) Superusers may see tenant as readonly
-    # ---------------------------------------
-    def get_readonly_fields(self, request, obj=None):
-        readonly = list(super().get_readonly_fields(request, obj))
+    # 2️⃣ Dynamically modify list_display for superusers
+    def get_list_display(self, request):
+        base = list(super().get_list_display(request))
+        print(f"[DEBUG] base list_display before modification: {base}")
 
         if request.user.is_superuser and hasattr(User, "tenant"):
-            if "tenant" not in readonly:
-                readonly.append("tenant")
+            if "tenant_display" not in base:
+                base.append("tenant_display")
+                print(f"[DEBUG] tenant_display added to list_display")
+        print(f"[DEBUG] final list_display: {base}")
+        return base
 
-        return readonly
-
-    # ---------------------------------------
-    # 3) Staff users should never see tenant field
-    # ---------------------------------------
+    # 3️⃣ Hide tenant field for non-superusers in form
     def get_fieldsets(self, request, obj=None):
         fieldsets = super().get_fieldsets(request, obj)
+        print(f"[DEBUG] initial fieldsets: {fieldsets}")
 
-        if hasattr(User, 'tenant') and not request.user.is_superuser:
+        if hasattr(User, "tenant") and not request.user.is_superuser:
             # remove tenant from all fieldsets
             cleaned = []
             for title, data in fieldsets:
                 fields = list(data.get("fields", []))
                 if "tenant" in fields:
                     fields.remove("tenant")
+                    print(f"[DEBUG] tenant removed from fieldset '{title}'")
                 cleaned.append((title, {**data, "fields": fields}))
             return cleaned
 
         return fieldsets
 
-    # ---------------------------------------
-    # 4) Ensure tenant auto-assign on creation
-    # ---------------------------------------
+    # 4️⃣ Make tenant readonly for superusers
+    def get_readonly_fields(self, request, obj=None):
+        readonly = list(super().get_readonly_fields(request, obj))
+        print(f"[DEBUG] base readonly_fields: {readonly}")
+
+        if request.user.is_superuser and hasattr(User, "tenant"):
+            if "tenant" not in readonly:
+                readonly.append("tenant")
+                print(f"[DEBUG] tenant added to readonly_fields")
+        print(f"[DEBUG] final readonly_fields: {readonly}")
+        return readonly
+
+    # 5️⃣ Filter queryset by tenant
+    def get_queryset(self, request):
+        qs = super().get_queryset(request)
+        print(f"[DEBUG] initial queryset count: {qs.count()}")
+        if hasattr(request, 'tenant') and request.tenant:
+            if hasattr(User, 'tenant'):
+                qs = qs.filter(tenant=request.tenant)
+                print(f"[DEBUG] filtered queryset count: {qs.count()}")
+        return qs
+
+    # 6️⃣ Auto-assign tenant on new objects
     def save_model(self, request, obj, form, change):
         if hasattr(obj, 'tenant') and not change and not obj.tenant_id:
             obj.tenant = request.tenant
+            print(f"[DEBUG] tenant set to {obj.tenant} for user {obj.username}")
         super().save_model(request, obj, form, change)
+
