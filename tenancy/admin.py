@@ -14,6 +14,7 @@ from .services import TenantProvisioner, TenantProvisioningError
 User = get_user_model()
 
 
+
 class TenantAdminSite(AdminSite):
     """
     Admin site used by tenants (shown at tenant domain, e.g. tenant.example.com/manage/).
@@ -233,35 +234,89 @@ class TenantAdminMixin:
 
 
 
-# Optional: Register User model in tenant admin for tenant-level user management
 @admin.register(User, site=tenant_admin_site)
 class TenantUserAdmin(BaseUserAdmin):
     """
     User admin for tenant site - shows only users belonging to current tenant
+    Superusers can see tenant and a readonly tenant_id_display; tenant managers
+    only see users for their tenant and do not see tenant fields.
     """
+
+    # fields we want to offer as readonly for superusers
+    readonly_fields = ("tenant_id_display",)
+
+    def tenant_id_display(self, obj):
+        return getattr(obj, "tenant_id", "-")
+    tenant_id_display.short_description = "Tenant ID"
 
     def get_queryset(self, request):
         qs = super().get_queryset(request)
-        if hasattr(request, 'tenant') and request.tenant:
-            if hasattr(User, 'tenant'):
-                return qs.filter(tenant=request.tenant)
-        return qs
+
+        # Superusers see all users
+        if request.user.is_superuser:
+            return qs
+
+        # Tenant managers see only users for their current tenant (if request.tenant is set)
+        if hasattr(request, "tenant") and request.tenant and hasattr(User, "tenant"):
+            return qs.filter(tenant=request.tenant)
+
+        # Fallback: empty queryset to maintain isolation
+        return qs.none()
 
     def save_model(self, request, obj, form, change):
-        if hasattr(obj, 'tenant') and not change:
-            if not getattr(obj, 'tenant_id', None):
+        # When creating a new user from tenant-admin UI, auto-assign tenant if not set.
+        if not change and hasattr(obj, "tenant") and not getattr(obj, "tenant_id", None):
+            # Only auto-assign when the request has a tenant and the current user is not superuser.
+            # If superuser is creating, respect whatever they set in the form.
+            if hasattr(request, "tenant") and request.tenant and not request.user.is_superuser:
                 obj.tenant = request.tenant
         super().save_model(request, obj, form, change)
 
+    def get_readonly_fields(self, request, obj=None):
+        # Superusers should get tenant_id_display readonly field
+        base_readonly = super().get_readonly_fields(request, obj)
+        if request.user.is_superuser:
+            # combine and dedupe
+            return tuple(dict.fromkeys(list(base_readonly) + list(self.readonly_fields)))
+        return base_readonly
+
     def get_fieldsets(self, request, obj=None):
-        fieldsets = super().get_fieldsets(request, obj)
-        # Hide tenant field if it exists
-        if hasattr(User, 'tenant'):
-            fieldsets = list(fieldsets)
-            for name, data in fieldsets:
-                if 'fields' in data:
-                    fields = list(data['fields'])
-                    if 'tenant' in fields:
-                        fields.remove('tenant')
-                        data['fields'] = tuple(fields)
-        return fieldsets
+        """
+        Show tenant field and the readonly tenant_id_display to superusers.
+        Hide tenant field for tenant managers.
+        """
+        fieldsets = list(super().get_fieldsets(request, obj))
+
+        for index, (name, data) in enumerate(fieldsets):
+            # Only modify if this fieldset has 'fields'
+            fields = list(data.get("fields", ()))
+            changed = False
+
+            if request.user.is_superuser:
+                # Ensure superusers see the tenant field (if present) and tenant_id_display
+                # Insert tenant_id_display next to username if possible
+                if "tenant" in fields:
+                    # ensure tenant_id_display is present after username if username exists
+                    if "username" in fields and "tenant_id_display" not in fields:
+                        insert_at = fields.index("username") + 1
+                        fields.insert(insert_at, "tenant_id_display")
+                        changed = True
+                    elif "tenant_id_display" not in fields:
+                        fields.append("tenant_id_display")
+                        changed = True
+                else:
+                    # If tenant field is not in that set, still try adding tenant_id_display
+                    if "tenant_id_display" not in fields:
+                        fields.append("tenant_id_display")
+                        changed = True
+            else:
+                # Non-superusers: remove any tenant-related fields (tenant, tenant_id_display)
+                for remove_field in ("tenant", "tenant_id_display"):
+                    if remove_field in fields:
+                        fields.remove(remove_field)
+                        changed = True
+
+            if changed:
+                fieldsets[index] = (name, {**data, "fields": tuple(fields)})
+
+        return tuple(fieldsets)
