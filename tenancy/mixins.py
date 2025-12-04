@@ -92,9 +92,10 @@ class CloneForTenantMixin:
 
     @classmethod
     def clone_defaults_for_new_tenant(cls, new_tenant_id):
+        print ("Cloning!")
         new_instances = []
         for template in cls.get_template_queryset():
-            print(template)
+            print("Creating new instance!")
             new_instances.append(template.clone_for_tenant(new_tenant_id))
         return new_instances
 
