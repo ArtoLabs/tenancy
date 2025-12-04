@@ -292,4 +292,4 @@ class SuperUserUserAdmin(BaseUserAdmin):
             readonly.append("tenant")
         return readonly
 
-super_admin_site.register(User, SuperUserUserAdmin)
+
