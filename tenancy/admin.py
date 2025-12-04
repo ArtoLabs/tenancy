@@ -110,7 +110,7 @@ class SuperAdminSite(AdminSite):
                     'password': form.cleaned_data['admin_password'],
                 }
                 try:
-                    tenant, user = TenantProvisioner.create_tenant(tenant_data, admin_data, run_migrations=False)
+                    tenant, user = TenantProvisioner.create_tenant(tenant_data, admin_data)
                 except TenantProvisioningError as exc:
                     messages.error(request, f"Failed to create tenant: {exc}")
                 except Exception as exc:
