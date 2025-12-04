@@ -264,27 +264,17 @@ class TenantUserAdmin(BaseUserAdmin):
 
 @admin.register(User, site=super_admin_site)
 class SuperUserUserAdmin(BaseUserAdmin):
+
+    list_display = BaseUserAdmin.list_display + ('tenant_display',)
+
     def tenant_display(self, obj):
         if hasattr(obj, "tenant") and obj.tenant:
             return f"{obj.tenant.id} – {obj.tenant.name}"
         return "-"
     tenant_display.short_description = "Tenant"
 
-    def get_list_display(self, request):
-        base = list(super().get_list_display(request))
-        if hasattr(User, "tenant") and "tenant_display" not in base:
-            base.append("tenant_display")
-        return base
-
-    def get_queryset(self, request):
-        qs = super().get_queryset(request)
-        return qs
-
     def get_readonly_fields(self, request, obj=None):
         readonly = list(super().get_readonly_fields(request, obj))
         if hasattr(User, "tenant") and "tenant" not in readonly:
             readonly.append("tenant")
         return readonly
-
-
-
