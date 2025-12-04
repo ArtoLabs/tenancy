@@ -240,44 +240,28 @@ class TenantUserAdmin(BaseUserAdmin):
     User admin for tenant site - shows only users belonging to current tenant
     """
 
-    readonly_fields = ("tenant_id_display",)
+    def get_queryset(self, request):
+        qs = super().get_queryset(request)
+        if hasattr(request, 'tenant') and request.tenant:
+            if hasattr(User, 'tenant'):
+                return qs.filter(tenant=request.tenant)
+        return qs
 
-    def tenant_id_display(self, obj):
-        if obj and getattr(obj, "tenant_id", None):
-            return obj.tenant_id
-        return "-"
-    tenant_id_display.short_description = "Tenant ID"
-
-    def get_readonly_fields(self, request, obj=None):
-        # Superusers see tenant ID; tenant admins do not
-        if request.user.is_superuser:
-            return self.readonly_fields + super().get_readonly_fields(request, obj)
-        return super().get_readonly_fields(request, obj)
+    def save_model(self, request, obj, form, change):
+        if hasattr(obj, 'tenant') and not change:
+            if not getattr(obj, 'tenant_id', None):
+                obj.tenant = request.tenant
+        super().save_model(request, obj, form, change)
 
     def get_fieldsets(self, request, obj=None):
         fieldsets = super().get_fieldsets(request, obj)
-        fieldsets = list(fieldsets)
-
-        # Remove tenant field for non-superusers
-        for name, data in fieldsets:
-            if "fields" in data:
-                fields = list(data["fields"])
-
-                if not request.user.is_superuser:
-                    if "tenant" in fields:
-                        fields.remove("tenant")
-                else:
-                    # Superuser sees tenant_id_display
-                    if "username" in fields:
-                        fields.insert(fields.index("username") + 1, "tenant_id_display")
-
-                data["fields"] = tuple(fields)
-
+        # Hide tenant field if it exists
+        if hasattr(User, 'tenant'):
+            fieldsets = list(fieldsets)
+            for name, data in fieldsets:
+                if 'fields' in data:
+                    fields = list(data['fields'])
+                    if 'tenant' in fields:
+                        fields.remove('tenant')
+                        data['fields'] = tuple(fields)
         return fieldsets
-
-    def get_queryset(self, request):
-        qs = super().get_queryset(request)
-        if hasattr(request, "tenant") and request.tenant:
-            if hasattr(User, "tenant") and not request.user.is_superuser:
-                return qs.filter(tenant=request.tenant)
-        return qs
