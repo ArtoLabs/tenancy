@@ -25,27 +25,39 @@ class TenantAdminSite(AdminSite):
 
     def has_permission(self, request):
         """Allow staff users who belong to the current tenant"""
+        import logging
+        logger = logging.getLogger(__name__)
+
         if not request.user.is_active:
+            logger.debug(f"User {request.user} denied: not active")
             return False
 
         # Superusers always have access
         if request.user.is_superuser:
+            logger.debug(f"Superuser {request.user} granted access")
             return True
 
         # Staff users need to belong to current tenant
         if not request.user.is_staff:
+            logger.debug(f"User {request.user} denied: not staff")
             return False
 
         # Check if user belongs to current tenant
         tenant = getattr(request, 'tenant', None)
         if tenant is None:
+            logger.warning(f"Staff user {request.user} denied: no tenant in request")
             return False
 
         # If User model has tenant field, check it
         if hasattr(request.user, 'tenant'):
-            return request.user.tenant == tenant
+            user_tenant = request.user.tenant
+            has_access = user_tenant == tenant
+            logger.debug(
+                f"Staff user {request.user} - User tenant: {user_tenant}, Request tenant: {tenant}, Access: {has_access}")
+            return has_access
 
         # Otherwise allow staff users (for projects without tenant-aware users)
+        logger.debug(f"Staff user {request.user} granted access (no tenant field on User model)")
         return True
 
     def get_app_list(self, request):
@@ -169,6 +181,9 @@ class TenantAdminMixin:
         @admin.register(YourModel, site=tenant_admin_site)
         class YourModelAdmin(TenantAdminMixin, admin.ModelAdmin):
             ...
+
+    This mixin grants full CRUD permissions to staff users within their tenant,
+    bypassing Django's default permission system which requires explicit model permissions.
     """
 
     def get_queryset(self, request):
@@ -187,10 +202,44 @@ class TenantAdminMixin:
         super().save_model(request, obj, form, change)
 
     def has_module_permission(self, request):
-        """Allow access if user has tenant context"""
-        if not super().has_module_permission(request):
+        """
+        Allow access if user has tenant context and is staff.
+        Staff users within a tenant can access all tenant-scoped models.
+        """
+        # Check if user is staff and has tenant context
+        if not request.user.is_active or not request.user.is_staff:
             return False
-        return hasattr(request, 'tenant') and request.tenant is not None
+
+        # Ensure tenant context exists
+        if not hasattr(request, 'tenant') or request.tenant is None:
+            return False
+
+        # For superusers, always allow
+        if request.user.is_superuser:
+            return True
+
+        # For staff users, check if they belong to the current tenant
+        if hasattr(request.user, 'tenant'):
+            return request.user.tenant == request.tenant
+
+        # Default: allow staff users (for projects without tenant field on User)
+        return True
+
+    def has_add_permission(self, request):
+        """Allow staff users to add objects within their tenant"""
+        return self.has_module_permission(request)
+
+    def has_change_permission(self, request, obj=None):
+        """Allow staff users to change objects within their tenant"""
+        return self.has_module_permission(request)
+
+    def has_delete_permission(self, request, obj=None):
+        """Allow staff users to delete objects within their tenant"""
+        return self.has_module_permission(request)
+
+    def has_view_permission(self, request, obj=None):
+        """Allow staff users to view objects within their tenant"""
+        return self.has_module_permission(request)
 
     def get_exclude(self, request, obj=None):
         """Hide tenant field from forms since it's auto-assigned"""
