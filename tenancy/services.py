@@ -43,7 +43,7 @@ class TenantProvisioner:
             model for model in apps.get_models()
             if issubclass(model, CloneForTenantMixin)
         ]
-        
+
         for model in apps.get_models():
             if issubclass(model, CloneForTenantMixin):
                 print("MODEL:", model.__name__)
