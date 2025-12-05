@@ -170,9 +170,17 @@ class CloneForTenantMixin:
             The newly created cloned object
         """
         overrides = overrides or {}
+
         data = model_to_dict(self, exclude=self.CLONE_EXCLUDE_FIELDS)
-        data["tenant_id"] = new_tenant_id
+
+        # Fetch the Tenant instance
+        tenant_instance = Tenant.objects.get(id=new_tenant_id)
+        data["tenant"] = tenant_instance  # assign instance, not ID
+
+        # Apply any overrides
         data.update(overrides)
+
+        # Create and return cloned object
         return self.__class__.objects.create(**data)
 
     @classmethod
