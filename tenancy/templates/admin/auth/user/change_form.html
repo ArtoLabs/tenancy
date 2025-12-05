@@ -6,14 +6,14 @@
         <h1>{% trans 'Change user' %}: {{ original }}</h1>
         {% if request.tenant and original.tenant %}
             <p class="help">
-                {% trans 'Tenant' %}: <strong>{{ original.tenant.name }}</strong>
+                {% trans 'Tenant' %}: <strong>{{ original.tenant.id }} – {{ original.tenant.domain }}</strong>
             </p>
         {% endif %}
     {% else %}
         <h1>{% trans 'Add user' %}</h1>
         {% if request.tenant %}
             <p class="help">
-                {% trans 'This user will be created for tenant' %}: <strong>{{ request.tenant.name }}</strong>
+                {% trans 'This user will be created for tenant' %}: <strong>{{ request.tenant.id }} – {{ request.tenant.domain }}</strong>
             </p>
         {% endif %}
     {% endif %}
@@ -21,14 +21,31 @@
 
 {% block field_sets %}
     {{ block.super }}
-    
+
+    {% comment %}
+    Display tenant information in a dedicated fieldset for existing users.
+    This shows both the tenant ID and domain for clarity.
+    Only shown when editing an existing user that has a tenant assigned.
+    {% endcomment %}
     {% if original and original.tenant %}
         <fieldset class="module aligned">
             <h2>{% trans 'Tenant Information' %}</h2>
             <div class="form-row">
                 <div>
-                    <label>{% trans 'Tenant' %}:</label>
-                    <div class="readonly">{{ original.tenant.name }} ({{ original.tenant.domain }})</div>
+                    <label>{% trans 'Tenant ID' %}:</label>
+                    <div class="readonly">{{ original.tenant.id }}</div>
+                </div>
+            </div>
+            <div class="form-row">
+                <div>
+                    <label>{% trans 'Domain' %}:</label>
+                    <div class="readonly">{{ original.tenant.domain }}</div>
+                </div>
+            </div>
+            <div class="form-row">
+                <div>
+                    <label>{% trans 'Name' %}:</label>
+                    <div class="readonly">{{ original.tenant.name }}</div>
                 </div>
             </div>
         </fieldset>
