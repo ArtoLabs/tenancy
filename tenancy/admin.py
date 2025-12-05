@@ -169,7 +169,7 @@ class TenantAdmin(admin.ModelAdmin):
 
 
 # # Register User on super admin so superusers can manage system users
-# super_admin_site.register(User, BaseUserAdmin)
+super_admin_site.register(User, BaseUserAdmin)
 
 
 # Optional: Register User model in tenant admin for tenant-level user management
