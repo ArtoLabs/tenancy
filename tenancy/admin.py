@@ -297,6 +297,7 @@ print("=======================================")
 
 @admin.register(User, site=super_admin_site)
 class SuperUserUserAdmin(BaseUserAdmin):
+    print(">>> LOADING SuperUserUserAdmin with id:", id(self))
 
     def __init__(self, model, admin_site):
         super().__init__(model, admin_site)
@@ -310,6 +311,10 @@ class SuperUserUserAdmin(BaseUserAdmin):
         if hasattr(model, "tenant"):
             print("[DEBUG] Injecting tenant into readonly_fields")
             self.readonly_fields = list(self.readonly_fields) + ["tenant"]
+
+    def changelist_view(self, request, extra_context=None):
+        print(">>> CHANGELIST SuperUserUserAdmin instance id:", id(self))
+        return super().changelist_view(request, extra_context)
 
     def tenant_display(self, obj):
         tenant = getattr(obj, "tenant", None)
