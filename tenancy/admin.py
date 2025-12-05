@@ -172,36 +172,35 @@ class TenantAdmin(admin.ModelAdmin):
 # super_admin_site.register(User, BaseUserAdmin)
 
 
-
 # Optional: Register User model in tenant admin for tenant-level user management
-# @admin.register(User, site=tenant_admin_site)
-# class TenantUserAdmin(BaseUserAdmin):
-#     """
-#     User admin for tenant site - shows only users belonging to current tenant
-#     """
-#
-#     def get_queryset(self, request):
-#         qs = super().get_queryset(request)
-#         if hasattr(request, 'tenant') and request.tenant:
-#             if hasattr(User, 'tenant'):
-#                 return qs.filter(tenant=request.tenant)
-#         return qs
-#
-#     def save_model(self, request, obj, form, change):
-#         if hasattr(obj, 'tenant') and not change:
-#             if not getattr(obj, 'tenant_id', None):
-#                 obj.tenant = request.tenant
-#         super().save_model(request, obj, form, change)
-#
-#     def get_fieldsets(self, request, obj=None):
-#         fieldsets = super().get_fieldsets(request, obj)
-#         # Hide tenant field if it exists
-#         if hasattr(User, 'tenant'):
-#             fieldsets = list(fieldsets)
-#             for name, data in fieldsets:
-#                 if 'fields' in data:
-#                     fields = list(data['fields'])
-#                     if 'tenant' in fields:
-#                         fields.remove('tenant')
-#                         data['fields'] = tuple(fields)
-#         return fieldsets
+@admin.register(User, site=tenant_admin_site)
+class TenantUserAdmin(BaseUserAdmin):
+    """
+    User admin for tenant site - shows only users belonging to current tenant
+    """
+
+    def get_queryset(self, request):
+        qs = super().get_queryset(request)
+        if hasattr(request, 'tenant') and request.tenant:
+            if hasattr(User, 'tenant'):
+                return qs.filter(tenant=request.tenant)
+        return qs
+
+    def save_model(self, request, obj, form, change):
+        if hasattr(obj, 'tenant') and not change:
+            if not getattr(obj, 'tenant_id', None):
+                obj.tenant = request.tenant
+        super().save_model(request, obj, form, change)
+
+    def get_fieldsets(self, request, obj=None):
+        fieldsets = super().get_fieldsets(request, obj)
+        # Hide tenant field if it exists
+        if hasattr(User, 'tenant'):
+            fieldsets = list(fieldsets)
+            for name, data in fieldsets:
+                if 'fields' in data:
+                    fields = list(data['fields'])
+                    if 'tenant' in fields:
+                        fields.remove('tenant')
+                        data['fields'] = tuple(fields)
+        return fieldsets
