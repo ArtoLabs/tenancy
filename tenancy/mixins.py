@@ -6,6 +6,10 @@ from .models import Tenant
 
 
 class TenantUserMixin(models.Model):
+    """
+    Mixin to add tenant field to custom user models.
+    Projects should add this to their custom user model.
+    """
     tenant = models.ForeignKey(
         Tenant,
         null=True,
@@ -34,8 +38,8 @@ class TenantMixin(models.Model):
         related_name='%(app_label)s_%(class)s_set',
         verbose_name='Tenant',
         db_index=True,
-        null=True,  # ← Added: Allows NULL in database
-        blank=True,  # ← Added: Allows blank in forms
+        null=True,
+        blank=True,
     )
 
     objects = TenantManager()
@@ -73,6 +77,10 @@ class TenantMixin(models.Model):
 
 
 class CloneForTenantMixin:
+    """
+    Mixin that allows cloning template objects (tenant=None) for new tenants.
+    Useful for default data provisioning.
+    """
     CLONE_EXCLUDE_FIELDS = ("id", "pk")
 
     @classmethod
@@ -84,6 +92,9 @@ class CloneForTenantMixin:
         return cls.objects.filter(tenant__isnull=True)
 
     def clone_for_tenant(self, new_tenant_id, overrides=None):
+        """
+        Creates a copy of this object for a specific tenant.
+        """
         overrides = overrides or {}
         data = model_to_dict(self, exclude=self.CLONE_EXCLUDE_FIELDS)
         data["tenant_id"] = new_tenant_id
@@ -92,20 +103,37 @@ class CloneForTenantMixin:
 
     @classmethod
     def clone_defaults_for_new_tenant(cls, new_tenant_id):
-        print ("Cloning!")
+        """
+        Clones all template objects for a new tenant.
+        """
         new_instances = []
         for template in cls.get_template_queryset():
-            print("Creating new instance!")
             new_instances.append(template.clone_for_tenant(new_tenant_id))
         return new_instances
 
 
 class TenantAdminMixin:
     """
-    Use this mixin for any ModelAdmin that should be tenant-scoped and appear in TenantAdminSite.
+    Mixin for ModelAdmin classes that should be tenant-scoped in TenantAdminSite.
+
+    This mixin:
+    - Filters querysets to show only objects belonging to current tenant
+    - Automatically sets tenant on new objects
+    - Enforces tenant-based permissions
+    - Filters foreign key choices to current tenant
+    - Hides the tenant field from forms (it's auto-set)
+
+    Usage in project's admin.py:
+        from tenancy.admin import tenant_admin_site
+        from tenancy.mixins import TenantAdminMixin
+
+        @admin.register(MyModel, site=tenant_admin_site)
+        class MyModelAdmin(TenantAdminMixin, admin.ModelAdmin):
+            list_display = ['name', 'description']
     """
 
     def get_queryset(self, request):
+        """Filter queryset to current tenant's objects."""
         qs = super().get_queryset(request)
         if hasattr(request, 'tenant') and request.tenant:
             if hasattr(qs.model, 'tenant'):
@@ -113,12 +141,14 @@ class TenantAdminMixin:
         return qs
 
     def save_model(self, request, obj, form, change):
+        """Automatically set tenant on new objects."""
         if hasattr(obj, 'tenant') and not change:
             if not getattr(obj, 'tenant_id', None):
                 obj.tenant = request.tenant
         super().save_model(request, obj, form, change)
 
     def has_module_permission(self, request):
+        """Check if user has permission to access this module."""
         if not request.user.is_active or not request.user.is_staff:
             return False
         if not hasattr(request, 'tenant') or request.tenant is None:
@@ -142,13 +172,17 @@ class TenantAdminMixin:
         return self.has_module_permission(request)
 
     def get_exclude(self, request, obj=None):
+        """Exclude tenant field from forms - it's set automatically."""
         exclude = list(super().get_exclude(request, obj) or [])
         if hasattr(self.model, 'tenant') and 'tenant' not in exclude:
             exclude.append('tenant')
         return exclude
 
-    # 🔥 The missing piece (THIS FIXES YOUR PROBLEM)
     def formfield_for_foreignkey(self, db_field, request, **kwargs):
+        """
+        Filter foreign key choices to only show objects from current tenant.
+        Only applies to models that use TenantMixin.
+        """
         model = db_field.remote_field.model
 
         # Only apply tenant filtering to tenant-aware models
@@ -160,19 +194,37 @@ class TenantAdminMixin:
         return super().formfield_for_foreignkey(db_field, request, **kwargs)
 
 
-
 class SuperUserAdminMixin:
+    """
+    Mixin for ModelAdmin classes in SuperAdminSite.
+
+    This mixin:
+    - Shows tenant field as readonly
+    - Adds tenant_display to list view
+    - Shows all objects across all tenants
+
+    Usage in package's admin.py:
+        from tenancy.admin import super_admin_site
+        from tenancy.mixins import SuperUserAdminMixin
+
+        @admin.register(MyModel, site=super_admin_site)
+        class MyModelSuperAdmin(SuperUserAdminMixin, admin.ModelAdmin):
+            list_display = ['name', 'description']
+    """
+
     readonly_fields = ('tenant',)
 
     def tenant_display(self, obj):
+        """Display tenant information in list view."""
         if hasattr(obj, 'tenant') and obj.tenant:
             return f"{obj.tenant.id} – {obj.tenant.name}"
         return "-"
+
     tenant_display.short_description = "Tenant"
 
     def get_list_display(self, request):
+        """Add tenant_display to list view."""
         base = list(super().get_list_display(request))
         if 'tenant_display' not in base:
             base.append('tenant_display')
         return base
-

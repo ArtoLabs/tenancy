@@ -1,0 +1,21 @@
+{% extends "admin/change_list.html" %}
+{% load i18n admin_urls %}
+
+{% block content_title %}
+    {% if request.tenant %}
+        <h1>{{ title }} - {{ request.tenant.name }}</h1>
+    {% else %}
+        <h1>{{ title }}</h1>
+    {% endif %}
+{% endblock %}
+
+{% block object-tools-items %}
+    {{ block.super }}
+    {% if has_add_permission and request.tenant %}
+        <li>
+            <a href="{% url opts|admin_urlname:'add' %}" class="addlink">
+                {% trans 'Add user' %}
+            </a>
+        </li>
+    {% endif %}
+{% endblock %}

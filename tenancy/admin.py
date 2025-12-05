@@ -10,8 +10,7 @@ from django.utils.translation import gettext as _
 from .models import Tenant
 from .forms import TenantCreationForm
 from .services import TenantProvisioner, TenantProvisioningError
-
-User = get_user_model()
+from .mixins import TenantAdminMixin, SuperUserAdminMixin
 
 
 class TenantAdminSite(AdminSite):
@@ -139,6 +138,7 @@ tenant_admin_site = TenantAdminSite(name='tenant_admin')
 super_admin_site = SuperAdminSite(name='super_admin')
 
 
+# Admin for the Tenant model included in this package
 @admin.register(Tenant, site=super_admin_site)
 class TenantAdmin(admin.ModelAdmin):
     """
@@ -168,39 +168,222 @@ class TenantAdmin(admin.ModelAdmin):
     view_tenant_admin.short_description = 'Tenant Admin'
 
 
-# # Register User on super admin so superusers can manage system users
-super_admin_site.register(User, BaseUserAdmin)
+# =============================================================================
+# DYNAMIC USER ADMIN GENERATOR
+# =============================================================================
 
-
-# Register User model in tenant admin for tenant-level user management
-@admin.register(User, site=tenant_admin_site)
-class TenantUserAdmin(BaseUserAdmin):
+def create_dynamic_user_admin():
     """
-    User admin for tenant site - shows only users belonging to current tenant
+    Dynamically creates a UserAdmin class based on the project's custom user model.
+    This function inspects the user model and generates appropriate admin configuration.
     """
+    User = get_user_model()
 
-    def get_queryset(self, request):
-        qs = super().get_queryset(request)
-        if hasattr(request, 'tenant') and request.tenant:
-            if hasattr(User, 'tenant'):
+    # Detect available fields
+    user_fields = {f.name for f in User._meta.get_fields() if not f.many_to_many and not f.one_to_many}
+
+    # Common field detection
+    has_username = 'username' in user_fields
+    has_email = 'email' in user_fields
+    has_first_name = 'first_name' in user_fields
+    has_last_name = 'last_name' in user_fields
+    has_tenant = 'tenant' in user_fields
+
+    # Build list_display
+    list_display = []
+    if has_username:
+        list_display.append('username')
+    if has_email:
+        list_display.append('email')
+    if has_first_name:
+        list_display.append('first_name')
+    if has_last_name:
+        list_display.append('last_name')
+    list_display.extend(['is_staff', 'is_active'])
+
+    # Build search_fields
+    search_fields = []
+    if has_username:
+        search_fields.append('username')
+    if has_email:
+        search_fields.append('email')
+    if has_first_name:
+        search_fields.append('first_name')
+    if has_last_name:
+        search_fields.append('last_name')
+
+    # Build list_filter
+    list_filter = ['is_staff', 'is_superuser', 'is_active']
+    if has_tenant:
+        list_filter.append('tenant')
+
+    # Build fieldsets dynamically
+    fieldsets = []
+
+    # Personal info section
+    personal_fields = []
+    if has_username:
+        personal_fields.append('username')
+    if has_email:
+        personal_fields.append('email')
+    if has_first_name or has_last_name:
+        if has_first_name:
+            personal_fields.append('first_name')
+        if has_last_name:
+            personal_fields.append('last_name')
+
+    # Add tenant field to personal info if it exists
+    if has_tenant:
+        personal_fields.append('tenant')
+
+    if personal_fields:
+        fieldsets.append((None, {'fields': personal_fields}))
+
+    # Permissions section
+    permissions_fields = ['is_active', 'is_staff', 'is_superuser']
+    if 'groups' in user_fields:
+        permissions_fields.append('groups')
+    if 'user_permissions' in user_fields:
+        permissions_fields.append('user_permissions')
+
+    fieldsets.append((_('Permissions'), {'fields': permissions_fields}))
+
+    # Important dates section
+    important_dates_fields = []
+    if 'last_login' in user_fields:
+        important_dates_fields.append('last_login')
+    if 'date_joined' in user_fields:
+        important_dates_fields.append('date_joined')
+
+    if important_dates_fields:
+        fieldsets.append((_('Important dates'), {'fields': important_dates_fields}))
+
+    # Add password fieldset for creation
+    add_fieldsets_list = []
+    add_fields = []
+
+    if has_username:
+        add_fields.append('username')
+    if has_email:
+        add_fields.append('email')
+    if has_tenant:
+        add_fields.append('tenant')
+
+    add_fields.extend(['password1', 'password2'])
+
+    add_fieldsets_list.append((None, {
+        'classes': ('wide',),
+        'fields': add_fields,
+    }))
+
+    # Create the base admin class with all detected fields
+    class DynamicUserAdminBase(BaseUserAdmin):
+        list_display = list_display
+        search_fields = search_fields
+        list_filter = list_filter
+        fieldsets = fieldsets
+        add_fieldsets = add_fieldsets_list
+        ordering = ['id']
+
+        # For password field in change form
+        def get_form(self, request, obj=None, **kwargs):
+            form = super().get_form(request, obj, **kwargs)
+            # Ensure password field uses the proper widget
+            if 'password' in form.base_fields:
+                form.base_fields['password'].help_text = (
+                    "Raw passwords are not stored, so there is no way to see this "
+                    "user's password, but you can change the password using "
+                    '<a href="../password/">this form</a>.'
+                )
+            return form
+
+    return DynamicUserAdminBase
+
+
+def create_tenant_user_admin():
+    """
+    Creates a tenant-scoped user admin that filters users by current tenant.
+    """
+    DynamicUserAdminBase = create_dynamic_user_admin()
+    User = get_user_model()
+    has_tenant = hasattr(User, 'tenant')
+
+    class TenantScopedUserAdmin(TenantAdminMixin, DynamicUserAdminBase):
+        """
+        User admin for tenant site - shows only users belonging to current tenant.
+        Combines dynamic field detection with tenant scoping.
+        """
+
+        def get_queryset(self, request):
+            qs = super(DynamicUserAdminBase, self).get_queryset(request)
+            if has_tenant and hasattr(request, 'tenant') and request.tenant:
                 return qs.filter(tenant=request.tenant)
-        return qs
+            return qs
 
-    def save_model(self, request, obj, form, change):
-        if hasattr(obj, 'tenant') and not change:
-            if not getattr(obj, 'tenant_id', None):
-                obj.tenant = request.tenant
-        super().save_model(request, obj, form, change)
+        def save_model(self, request, obj, form, change):
+            if has_tenant and not change:
+                if not getattr(obj, 'tenant_id', None):
+                    if hasattr(request, 'tenant') and request.tenant:
+                        obj.tenant = request.tenant
+            super().save_model(request, obj, form, change)
 
-    def get_fieldsets(self, request, obj=None):
-        fieldsets = super().get_fieldsets(request, obj)
-        # Hide tenant field if it exists
-        # if hasattr(User, 'tenant'):
-        #     fieldsets = list(fieldsets)
-        #     for name, data in fieldsets:
-        #         if 'fields' in data:
-        #             fields = list(data['fields'])
-        #             if 'tenant' in fields:
-        #                 fields.remove('tenant')
-        #                 data['fields'] = tuple(fields)
-        return fieldsets
+        def get_exclude(self, request, obj=None):
+            # Don't exclude tenant field in tenant admin - let it be readonly
+            return None
+
+        def get_readonly_fields(self, request, obj=None):
+            readonly = list(super().get_readonly_fields(request, obj) or [])
+            if has_tenant and obj:  # When editing existing user
+                if 'tenant' not in readonly:
+                    readonly.append('tenant')
+            return readonly
+
+    return TenantScopedUserAdmin
+
+
+def create_super_user_admin():
+    """
+    Creates a super admin user admin that shows all users with tenant display.
+    """
+    DynamicUserAdminBase = create_dynamic_user_admin()
+    User = get_user_model()
+    has_tenant = hasattr(User, 'tenant')
+
+    class SuperUserAdmin(SuperUserAdminMixin, DynamicUserAdminBase):
+        """
+        User admin for super admin site - shows all users with tenant information.
+        """
+
+        def get_readonly_fields(self, request, obj=None):
+            readonly = list(super().get_readonly_fields(request, obj) or [])
+            if has_tenant and 'tenant' not in readonly:
+                readonly.append('tenant')
+            return readonly
+
+    return SuperUserAdmin
+
+
+# =============================================================================
+# AUTO-REGISTRATION
+# =============================================================================
+
+def register_user_admins():
+    """
+    Automatically register the dynamically generated user admin classes
+    on both admin sites.
+    """
+    User = get_user_model()
+
+    # Create the dynamic admin classes
+    SuperUserAdmin = create_super_user_admin()
+    TenantScopedUserAdmin = create_tenant_user_admin()
+
+    # Register on super admin site
+    super_admin_site.register(User, SuperUserAdmin)
+
+    # Register on tenant admin site
+    tenant_admin_site.register(User, TenantScopedUserAdmin)
+
+
+# Call registration when this module is imported
+register_user_admins()
