@@ -21,16 +21,30 @@ def check_clone_for_tenant_unique_fields(app_configs, **kwargs):
         if not issubclass(model, CloneForTenantMixin):
             continue
 
-        # Collect all user-defined fields that are unique
-        EXCLUDE_UNIQUE_FIELDS = ('id', 'tenant')
+        print(f"\n--- Checking model: {model.__name__} ---")
+        for field in model._meta.get_fields():
+            # Show all relevant info about the field
+            print(
+                f"Field name: {field.name}, "
+                f"type: {type(field)}, "
+                f"unique: {getattr(field, 'unique', None)}, "
+                f"auto_created: {getattr(field, 'auto_created', None)}, "
+                f"concrete: {getattr(field, 'concrete', None)}, "
+                f"editable: {getattr(field, 'editable', None)}, "
+                f"primary_key: {getattr(field, 'primary_key', None)}"
+            )
 
+        # Then also show the filtered list
+        EXCLUDE_UNIQUE_FIELDS = ('id', 'tenant')
         unique_fields = [
             field.name
             for field in model._meta.get_fields()
             if isinstance(field, models.Field)
-               and field.unique
+               and getattr(field, 'unique', False)
                and field.name not in EXCLUDE_UNIQUE_FIELDS
         ]
+
+        print(f"Filtered unique fields (after exclusions): {unique_fields}")
 
         if unique_fields:
             # Construct a single UniqueConstraint example for all unique fields
