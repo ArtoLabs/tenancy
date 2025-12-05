@@ -296,30 +296,27 @@ print("=======================================")
 
 
 @admin.register(User, site=super_admin_site)
+@admin.register(User, site=super_admin_site)
 class SuperUserUserAdmin(BaseUserAdmin):
-    print(">>> LOADING SuperUserUserAdmin with id:", id(self))
 
     def __init__(self, model, admin_site):
+        print(">>> LOADING SuperUserUserAdmin instance id:", id(self))
         super().__init__(model, admin_site)
-
-        # --- Make tenant appear in list_display ---
-        if hasattr(model, "tenant"):
-            print("[DEBUG] Injecting tenant_display into list_display")
-            self.list_display = list(self.list_display) + ["tenant_display"]
-
-        # --- Make tenant appear in readonly_fields ---
-        if hasattr(model, "tenant"):
-            print("[DEBUG] Injecting tenant into readonly_fields")
-            self.readonly_fields = list(self.readonly_fields) + ["tenant"]
 
     def changelist_view(self, request, extra_context=None):
         print(">>> CHANGELIST SuperUserUserAdmin instance id:", id(self))
         return super().changelist_view(request, extra_context)
 
     def tenant_display(self, obj):
-        tenant = getattr(obj, "tenant", None)
-        if tenant:
-            return f"{tenant.id} – {tenant.name}"
+        if hasattr(obj, "tenant") and obj.tenant:
+            return f"{obj.tenant.id} – {obj.tenant.name}"
         return "-"
     tenant_display.short_description = "Tenant"
+
+    def get_list_display(self, request):
+        base = list(super().get_list_display(request))
+        if "tenant_display" not in base:
+            base.append("tenant_display")
+        return base
+
 
