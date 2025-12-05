@@ -176,10 +176,10 @@ class TenantAdmin(admin.ModelAdmin):
     NOTE: This only registers on super_admin_site. Tenant model should NEVER
     appear in tenant_admin_site for security reasons.
     """
-    list_display = ['name', 'domain', 'is_active', 'created_at', 'view_tenant_admin']
+    list_display = ['name', 'domain', 'is_active', 'created_at', 'view_tenant_admin', 'tenant_id']
     list_filter = ['is_active', 'created_at']
     search_fields = ['name', 'domain']
-    readonly_fields = ['created_at', 'updated_at']
+    readonly_fields = ['created_at', 'updated_at', 'tenant_id']
 
     fieldsets = (
         ('Basic Information', {
