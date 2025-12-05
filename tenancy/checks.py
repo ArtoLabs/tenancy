@@ -47,29 +47,49 @@ def check_user_model_tenant_field(app_configs, **kwargs):
 @register()
 def check_clone_for_tenant_unique_fields(app_configs, **kwargs):
     """
-    Warn if any model that uses CloneForTenantMixin has fields with unique=True.
-    These unique fields will conflict when cloning template rows to new tenants.
-    Suggests converting them to tenant-scoped UniqueConstraint.
+    System check to warn about fields with `unique=True` in models that
+    inherit from CloneForTenantMixin. These unique fields need to be
+    converted to tenant-scoped constraints to avoid issues when cloning
+    templates for new tenants.
     """
     warnings = []
 
+    # Iterate over all models in the project
     for model in apps.get_models():
+        # Only check models using CloneForTenantMixin
         if not issubclass(model, CloneForTenantMixin):
             continue
 
-        for field in model._meta.fields:
-            if getattr(field, "unique", False):
-                warnings.append(
-                    Warning(
-                        f"Model '{model._meta.label}' has a field '{field.name}' with unique=True. "
-                        f"This will prevent cloning templates for new tenants.\n"
-                        f"Suggested fix:\n"
-                        f"    class Meta:\n"
-                        f"        constraints = [\n"
-                        f"            models.UniqueConstraint(fields=['tenant', '{field.name}'], name='unique_{field.name}_per_tenant')\n"
-                        f"        ]",
-                        id="tenancy.W001",
-                    )
+        # Collect all fields that are unique
+        unique_fields = [
+            field.name
+            for field in model._meta.get_fields()
+            if getattr(field, 'unique', False) and isinstance(field, models.Field)
+        ]
+
+        if unique_fields:
+            # Construct a single UniqueConstraint example
+            constraint_name = f'unique_tenant_{"_".join(unique_fields)}'
+            fields_list = "', '".join(['tenant'] + unique_fields)
+            code_snippet = f"""
+class {model.__name__}({', '.join([base.__name__ for base in model.__bases__])}):
+    # your fields here
+    tenant = models.ForeignKey(Tenant, on_delete=models.PROTECT)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=['{fields_list}'], name='{constraint_name}')
+        ]
+"""
+            warnings.append(
+                Warning(
+                    f"Model '{model._meta.label}' has fields with `unique=True` which are not tenant-scoped. "
+                    "This may cause errors when cloning template objects for new tenants.",
+                    hint=f"Consider converting unique fields to a tenant-aware constraint.\n"
+                         f"Example:\n{code_snippet}",
+                    obj=model,
+                    id="tenancy.W001",
                 )
+            )
 
     return warnings
