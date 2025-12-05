@@ -4,6 +4,7 @@ from django.contrib.auth import get_user_model
 from django.db.migrations.executor import MigrationExecutor
 from django.db import connections
 from django.apps import apps
+from django.db import models
 
 from .mixins import CloneForTenantMixin
 
