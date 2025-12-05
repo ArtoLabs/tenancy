@@ -143,17 +143,20 @@ class CloneForTenantMixin:
     @classmethod
     def get_template_queryset(cls):
         """
-        Returns a queryset of template rows.
-
-        Default implementation: all rows with tenant=None
-
-        Override this method if you want different logic for determining
-        which objects should be cloned.
-
-        Returns:
-            QuerySet: Objects to be cloned for new tenants
+        Returns a queryset of template rows for cloning.
+        Use the tenant with the lowest id as the default template.
         """
-        return cls.objects.filter(tenant__isnull=True)
+        from tenancy.models import Tenant
+
+        try:
+            template_tenant = Tenant.objects.order_by("id").first()
+        except Tenant.DoesNotExist:
+            return cls.objects.none()
+
+        if template_tenant is None:
+            return cls.objects.none()
+
+        return cls.objects.filter(tenant=template_tenant)
 
     def clone_for_tenant(self, new_tenant_id, overrides=None):
         """
