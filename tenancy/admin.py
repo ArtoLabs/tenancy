@@ -190,35 +190,35 @@ def create_dynamic_user_admin():
     has_tenant = 'tenant' in user_fields
 
     # Build list_display
-    list_display = []
+    _list_display = []
     if has_username:
-        list_display.append('username')
+        _list_display.append('username')
     if has_email:
-        list_display.append('email')
+        _list_display.append('email')
     if has_first_name:
-        list_display.append('first_name')
+        _list_display.append('first_name')
     if has_last_name:
-        list_display.append('last_name')
-    list_display.extend(['is_staff', 'is_active'])
+        _list_display.append('last_name')
+    _list_display.extend(['is_staff', 'is_active'])
 
     # Build search_fields
-    search_fields = []
+    _search_fields = []
     if has_username:
-        search_fields.append('username')
+        _search_fields.append('username')
     if has_email:
-        search_fields.append('email')
+        _search_fields.append('email')
     if has_first_name:
-        search_fields.append('first_name')
+        _search_fields.append('first_name')
     if has_last_name:
-        search_fields.append('last_name')
+        _search_fields.append('last_name')
 
     # Build list_filter
-    list_filter = ['is_staff', 'is_superuser', 'is_active']
+    _list_filter = ['is_staff', 'is_superuser', 'is_active']
     if has_tenant:
-        list_filter.append('tenant')
+        _list_filter.append('tenant')
 
     # Build fieldsets dynamically
-    fieldsets = []
+    _fieldsets = []
 
     # Personal info section
     personal_fields = []
@@ -237,7 +237,7 @@ def create_dynamic_user_admin():
         personal_fields.append('tenant')
 
     if personal_fields:
-        fieldsets.append((None, {'fields': personal_fields}))
+        _fieldsets.append((None, {'fields': personal_fields}))
 
     # Permissions section
     permissions_fields = ['is_active', 'is_staff', 'is_superuser']
@@ -246,7 +246,7 @@ def create_dynamic_user_admin():
     if 'user_permissions' in user_fields:
         permissions_fields.append('user_permissions')
 
-    fieldsets.append((_('Permissions'), {'fields': permissions_fields}))
+    _fieldsets.append((_('Permissions'), {'fields': permissions_fields}))
 
     # Important dates section
     important_dates_fields = []
@@ -256,10 +256,10 @@ def create_dynamic_user_admin():
         important_dates_fields.append('date_joined')
 
     if important_dates_fields:
-        fieldsets.append((_('Important dates'), {'fields': important_dates_fields}))
+        _fieldsets.append((_('Important dates'), {'fields': important_dates_fields}))
 
     # Add password fieldset for creation
-    add_fieldsets_list = []
+    _add_fieldsets = []
     add_fields = []
 
     if has_username:
@@ -271,18 +271,18 @@ def create_dynamic_user_admin():
 
     add_fields.extend(['password1', 'password2'])
 
-    add_fieldsets_list.append((None, {
+    _add_fieldsets.append((None, {
         'classes': ('wide',),
-        'fields': add_fields,
+        'fields': tuple(add_fields),
     }))
 
     # Create the base admin class with all detected fields
     class DynamicUserAdminBase(BaseUserAdmin):
-        list_display = list_display
-        search_fields = search_fields
-        list_filter = list_filter
-        fieldsets = fieldsets
-        add_fieldsets = add_fieldsets_list
+        list_display = _list_display
+        search_fields = _search_fields
+        list_filter = _list_filter
+        fieldsets = _fieldsets
+        add_fieldsets = _add_fieldsets
         ordering = ['id']
 
         # For password field in change form
