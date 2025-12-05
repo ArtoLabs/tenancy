@@ -25,9 +25,11 @@ def check_clone_for_tenant_unique_fields(app_configs, **kwargs):
         unique_fields = [
             field.name
             for field in model._meta.get_fields()
-            if getattr(field, 'unique', False)
-               and isinstance(field, models.Field)
-               and field.name not in ('id', 'tenant')  # exclude PK and tenant FK
+            if isinstance(field, models.Field)
+               and field.unique
+               and field.concrete
+               and not field.auto_created
+               and field.name not in ('id', 'tenant')
         ]
 
         if unique_fields:
