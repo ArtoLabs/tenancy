@@ -46,30 +46,20 @@ class TenantProvisioner:
 
         for model in apps.get_models():
             if issubclass(model, CloneForTenantMixin):
-                print("MODEL:", model.__name__)
                 # What object are we about to call?
                 attr = getattr(model, "clone_defaults_for_new_tenant", None)
-                print("  has_attr:", bool(attr))
                 if attr:
                     # show where the function is defined
                     try:
                         fn = attr.__func__ if hasattr(attr, "__func__") else attr
-                        print("  defined in:", fn.__module__)
-                        print("  source snippet:")
-                        print("\n".join(inspect.getsource(fn).splitlines()[:20]))
                     except Exception as e:
-                        print("  cannot show source:", e)
-
+                        logger.error("  cannot show source:", e)
                 # Check whether template rows exist for this model (use model.get_template_queryset)
                 try:
                     qs = model.get_template_queryset()
-                    print("  template queryset count:", qs.count())
-                    print("  example templates:", list(qs[:3]))
                 except Exception as e:
-                    print("  get_template_queryset raised:", repr(e))
-
+                    logger.error("  get_template_queryset raised:", repr(e))
         for model in cloneable_models:
-            print(f"Cloning defaults for model: {model.__name__}")
             logger.info(f"Cloning defaults for model: {model.__name__}")
             model.clone_defaults_for_new_tenant(tenant.id)
 
