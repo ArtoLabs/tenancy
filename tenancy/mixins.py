@@ -160,8 +160,8 @@ class TenantAdminMixin:
         return super().formfield_for_foreignkey(db_field, request, **kwargs)
 
 
-    
-class TenantSuperUserAdminMixin:
+
+class SuperUserAdminMixin:
     readonly_fields = ('tenant',)
 
     def tenant_display(self, obj):
@@ -175,3 +175,4 @@ class TenantSuperUserAdminMixin:
         if 'tenant_display' not in base:
             base.append('tenant_display')
         return base
+
