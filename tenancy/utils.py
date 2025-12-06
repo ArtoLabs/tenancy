@@ -677,6 +677,23 @@ def clone_all_template_objects(
     querysets = {}
     tenant_models = get_all_tenant_models()
 
+    # DEBUG: Log field information for all models
+    logger.debug("=" * 60)
+    logger.debug("DEBUG: Examining fields for all tenant models")
+    logger.debug("=" * 60)
+    for model in tenant_models:
+        logger.debug(f"\n{model.__name__} fields:")
+        try:
+            all_fields = model._meta.get_fields()
+            for field in all_fields:
+                logger.debug(
+                    f"  - {getattr(field, 'name', 'NO_NAME')}: {type(field)} "
+                    f"(is FK: {isinstance(field, models.ForeignKey)})"
+                )
+        except Exception as e:
+            logger.error(f"  ERROR getting fields for {model.__name__}: {e}")
+    logger.debug("=" * 60)
+
     for model in tenant_models:
         if model in excluded_models:
             logger.info(f"Skipping excluded model: {model.__name__}")
