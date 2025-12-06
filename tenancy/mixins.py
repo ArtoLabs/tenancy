@@ -39,26 +39,19 @@ class TenantUserMixin(models.Model):
 
 class TenantMixin(models.Model):
     """
-    Mixin to add tenant support to any Django model.
+    Mixin to add tenant support and cloning capabilities to any Django model.
 
     This mixin provides:
     - A foreign key to the Tenant model
     - A custom manager (TenantManager) with tenant-aware methods
     - Automatic tenant assignment on save
     - Helper method to identify tenant models
+    - Ability to clone template objects (tenant=None) for new tenants
 
     Usage:
-        from tenancy.mixins import TenantMixin
-
         class MyModel(TenantMixin):
             name = models.CharField(max_length=100)
             # ... other fields
-
-    The tenant field is:
-    - nullable: Allows template/default objects with tenant=None
-    - blank: Allows forms to be submitted without explicit tenant
-    - CASCADE: When a tenant is deleted, all its data is deleted
-    - indexed: For query performance when filtering by tenant
     """
 
     tenant = models.ForeignKey(
@@ -74,6 +67,9 @@ class TenantMixin(models.Model):
     # Use custom manager that provides tenant-aware query methods
     objects = TenantManager()
 
+    # Fields to exclude when cloning objects
+    CLONE_EXCLUDE_FIELDS = ("id", "pk")
+
     class Meta:
         abstract = True
         indexes = [
@@ -83,13 +79,6 @@ class TenantMixin(models.Model):
     def save(self, *args, **kwargs):
         """
         Override save to automatically set tenant from context if not set.
-
-        This ensures that objects are always associated with a tenant when
-        saved within a tenant context (i.e., when middleware has set the
-        current tenant).
-
-        Raises:
-            ValueError: If no tenant is set and no current tenant in context
         """
         if not self.tenant_id:
             from .context import get_current_tenant
@@ -109,45 +98,18 @@ class TenantMixin(models.Model):
     def _is_tenant_model(cls):
         """
         Helper method to identify if a model uses the tenant mixin.
-
-        This is used by TenantAdminMixin to determine whether to apply
-        tenant filtering to foreign key fields.
-
-        Returns:
-            bool: True if this model has a tenant field
         """
         return hasattr(cls, 'tenant')
 
-
-class CloneForTenantMixin:
-    """
-    Mixin that allows cloning template objects (tenant=None) for new tenants.
-
-    This is useful for default data provisioning when creating new tenants.
-    For example, you might have default categories, settings, or configurations
-    that every new tenant should receive.
-
-    Usage:
-        class Category(TenantMixin, CloneForTenantMixin):
-            name = models.CharField(max_length=100)
-
-        # Create template categories (tenant=None)
-        Category.objects.create(name="Electronics", tenant=None)
-        Category.objects.create(name="Clothing", tenant=None)
-
-        # When creating a new tenant, clone the templates
-        Category.clone_defaults_for_new_tenant(new_tenant.id)
-    """
-    CLONE_EXCLUDE_FIELDS = ("id", "pk")
+    # ------------------------------
+    # Cloning methods from CloneForTenantMixin
+    # ------------------------------
 
     @classmethod
     def get_template_queryset(cls):
         """
-        Returns a queryset of template rows for cloning.
-        Use the tenant with the lowest id as the default template.
+        Returns a queryset of template rows for cloning (tenant=None).
         """
-        from tenancy.models import Tenant
-
         try:
             template_tenant = Tenant.objects.order_by("id").first()
         except Tenant.DoesNotExist:
@@ -161,13 +123,6 @@ class CloneForTenantMixin:
     def clone_for_tenant(self, new_tenant_id, overrides=None):
         """
         Creates a copy of this object for a specific tenant.
-
-        Args:
-            new_tenant_id: The ID of the tenant to clone this object for
-            overrides: Optional dict of field values to override in the clone
-
-        Returns:
-            The newly created cloned object
         """
         overrides = overrides or {}
 
@@ -187,15 +142,6 @@ class CloneForTenantMixin:
     def clone_defaults_for_new_tenant(cls, new_tenant_id):
         """
         Clones all template objects for a new tenant.
-
-        This is typically called as part of the tenant provisioning workflow
-        to give new tenants a set of default data.
-
-        Args:
-            new_tenant_id: The ID of the tenant to clone objects for
-
-        Returns:
-            list: All newly created instances
         """
         new_instances = []
         for template in cls.get_template_queryset():
