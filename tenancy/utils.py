@@ -384,8 +384,22 @@ def _resolve_foreign_keys(
     Returns:
         Updated data dictionary with resolved FKs
     """
-    for field in model_class._meta.get_fields():
-        if not isinstance(field, models.ForeignKey):
+    try:
+        all_fields = model_class._meta.get_fields()
+    except Exception as e:
+        logger.error(f"Error getting fields for {model_class.__name__}: {e}")
+        return data
+
+    for field in all_fields:
+        # Check if this is a ForeignKey field
+        try:
+            if not isinstance(field, models.ForeignKey):
+                continue
+        except Exception as e:
+            logger.warning(
+                f"Skipping field in {model_class.__name__} during FK resolution: {e}. "
+                f"Field type: {type(field)}"
+            )
             continue
 
         field_name = field.name
@@ -400,7 +414,11 @@ def _resolve_foreign_keys(
             continue
 
         # Get the original related object ID
-        original_fk_id = getattr(original_obj, f"{field_name}_id", None)
+        try:
+            original_fk_id = getattr(original_obj, f"{field_name}_id", None)
+        except Exception as e:
+            logger.warning(f"Could not get FK ID for {field_name}: {e}")
+            continue
 
         if original_fk_id is None:
             # FK is null, keep it null
@@ -408,7 +426,11 @@ def _resolve_foreign_keys(
             continue
 
         # Get the related model
-        related_model = field.related_model
+        try:
+            related_model = field.related_model
+        except Exception as e:
+            logger.warning(f"Could not get related_model for {field_name}: {e}")
+            continue
 
         # Check if we've already cloned this related object
         if related_model in clone_map and original_fk_id in clone_map[related_model]:
@@ -428,7 +450,11 @@ def _resolve_foreign_keys(
             )
             # Keep the original FK value - this may cause issues if the
             # referenced object doesn't exist in the new tenant
-            data[field_name] = getattr(original_obj, field_name)
+            try:
+                data[field_name] = getattr(original_obj, field_name)
+            except Exception as e:
+                logger.error(f"Could not get original FK value for {field_name}: {e}")
+                data[field_name] = None
 
     return data
 
@@ -498,12 +524,33 @@ def _topological_sort_models(
 
     # Build the graph by examining foreign key relationships
     for model in models:
-        for field in model._meta.get_fields():
-            if not isinstance(field, models.ForeignKey):
+        try:
+            # Get all fields for this model
+            all_fields = model._meta.get_fields()
+        except Exception as e:
+            logger.error(f"Error getting fields for {model.__name__}: {e}")
+            continue
+
+        for field in all_fields:
+            # Skip fields that aren't ForeignKey instances
+            # Use try-except to handle any edge cases
+            try:
+                if not isinstance(field, models.ForeignKey):
+                    continue
+            except Exception as e:
+                logger.warning(
+                    f"Skipping field in {model.__name__} due to error: {e}. "
+                    f"Field type: {type(field)}"
+                )
                 continue
 
             # Skip self-referential and tenant FKs
-            related_model = field.related_model
+            try:
+                related_model = field.related_model
+            except Exception as e:
+                logger.warning(f"Could not get related_model for field {field.name}: {e}")
+                continue
+
             if related_model == model or field.name == 'tenant':
                 continue
 

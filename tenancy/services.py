@@ -107,12 +107,14 @@ class TenantProvisioner:
             logger.info("Beginning template object cloning...")
             logger.info("=" * 60)
 
-            # Right before calling clone_all_template_objects
-            from .utils import get_all_tenant_models
+            # Add this in your code temporarily to diagnose
+            from .utils import clone_all_template_objects
 
-            tenant_models = get_all_tenant_models()
-            for model in tenant_models:
-                print(f"Model: {model}, Type: {type(model)}, Abstract: {model._meta.abstract}")
+            # Before calling clone_all_template_objects
+            for model in [Theme, TitleFont, BodyFont, SiteConfig]:
+                print(f"\n{model.__name__} fields:")
+                for field in model._meta.get_fields():
+                    print(f"  - {field.name}: {type(field)}")
 
             clone_map = clone_all_template_objects(
                 new_tenant=tenant,
