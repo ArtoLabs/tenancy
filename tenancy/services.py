@@ -107,6 +107,13 @@ class TenantProvisioner:
             logger.info("Beginning template object cloning...")
             logger.info("=" * 60)
 
+            # Right before calling clone_all_template_objects
+            from .utils import get_all_tenant_models
+
+            tenant_models = get_all_tenant_models()
+            for model in tenant_models:
+                print(f"Model: {model}, Type: {type(model)}, Abstract: {model._meta.abstract}")
+
             clone_map = clone_all_template_objects(
                 new_tenant=tenant,
                 # template_tenant=None,  # Uses first tenant by default
