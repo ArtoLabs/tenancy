@@ -305,22 +305,28 @@ def _extract_fields_skeleton_mode(
     exclude_fields: tuple
 ) -> Dict[str, Any]:
     """
-    Extract fields in skeleton mode - set all nullable fields to None.
+    Extract fields in skeleton mode - set fields to sensible defaults.
 
     In skeleton mode:
-    - Only required fields (null=False, no default) are cloned
-    - All optional/nullable fields are set to None
-    - Foreign keys are set to None (unless required)
+    - Required fields are cloned from the original
+    - Optional fields get intelligent defaults based on field type:
+      * CharField/TextField → empty string ""
+      * IntegerField/FloatField/DecimalField → 0
+      * BooleanField → False
+      * DateField/DateTimeField → None
+      * ForeignKey → first available instance of related model, or None
+      * Other fields → None
+    - If a field already has a default value defined, that default is used
 
-    This is useful for creating "blank" configurations where you want
-    the structure but not the content.
+    This creates functional "blank" objects that won't cause __str__ issues
+    and can be immediately used/edited by users.
 
     Args:
         original_obj: The object to clone
         exclude_fields: Fields to exclude from extraction
 
     Returns:
-        Dictionary of field values with nullable fields set to None
+        Dictionary of field values with intelligent skeleton defaults
     """
     model_class = original_obj.__class__
     data = {}
@@ -349,14 +355,89 @@ def _extract_fields_skeleton_mode(
                 f"{model_class.__name__}.{field_name}"
             )
         else:
-            # Set optional fields to None
-            data[field_name] = None
+            # Set optional fields to intelligent defaults
+            default_value = _get_skeleton_default_for_field(field)
+            data[field_name] = default_value
             logger.debug(
-                f"Skeleton mode: nullifying field "
-                f"{model_class.__name__}.{field_name}"
+                f"Skeleton mode: setting {model_class.__name__}.{field_name} "
+                f"to {default_value} (type: {type(field).__name__})"
             )
 
     return data
+
+
+def _get_skeleton_default_for_field(field) -> Any:
+    """
+    Get an intelligent default value for a field in skeleton clone mode.
+
+    This function determines appropriate "blank" values based on field type
+    to ensure cloned skeleton objects are functional and don't cause issues
+    with __str__ methods or validation.
+
+    Priority:
+    1. If field has a default value defined, use it
+    2. Otherwise, use type-based intelligent defaults
+
+    Args:
+        field: Django model field instance
+
+    Returns:
+        Appropriate default value for the field type
+    """
+    # If field has an explicit default, use it
+    if field.has_default():
+        default = field.get_default()
+        logger.debug(f"Using field default: {default}")
+        return default
+
+    # String fields - use empty string to prevent None in __str__
+    if isinstance(field, (models.CharField, models.TextField,
+                         models.SlugField, models.EmailField,
+                         models.URLField)):
+        return ""
+
+    # Numeric fields - use 0
+    if isinstance(field, (models.IntegerField, models.BigIntegerField,
+                         models.SmallIntegerField, models.PositiveIntegerField,
+                         models.PositiveSmallIntegerField)):
+        return 0
+
+    if isinstance(field, (models.FloatField, models.DecimalField)):
+        return 0
+
+    # Boolean fields - use False
+    if isinstance(field, models.BooleanField):
+        return False
+
+    # Foreign Key - try to find first available instance
+    if isinstance(field, models.ForeignKey):
+        try:
+            related_model = field.related_model
+            # Try to get the first instance of the related model
+            first_instance = related_model.objects.first()
+            if first_instance:
+                logger.debug(
+                    f"Found first instance of {related_model.__name__} "
+                    f"(id={first_instance.id}) for FK default"
+                )
+                return first_instance
+        except Exception as e:
+            logger.warning(
+                f"Could not get first instance for FK field {field.name}: {e}"
+            )
+        return None
+
+    # Date/Time fields - use None (these typically shouldn't be empty string)
+    if isinstance(field, (models.DateField, models.DateTimeField,
+                         models.TimeField)):
+        return None
+
+    # JSON fields - use empty dict or list
+    if isinstance(field, models.JSONField):
+        return {}
+
+    # All other field types - use None
+    return None
 
 
 def _resolve_foreign_keys(
