@@ -1,7 +1,7 @@
 # tenancy/checks.py
 from django.core.checks import Warning, register
 from django.apps import apps
-from tenancy.mixins import CloneForTenantMixin
+from tenancy.mixins import TenantMixin
 from django.db import models
 
 
@@ -15,7 +15,7 @@ def tenant_unique_field_checks(app_configs, **kwargs):
     errors = []
 
     for model in apps.get_models():
-        if issubclass(model, CloneForTenantMixin):
+        if issubclass(model, TenantMixin):
             # Only check concrete models
             if not hasattr(model, "_meta"):
                 continue
