@@ -109,6 +109,7 @@ class TenantProvisioner:
 
             # Add this in your code temporarily to diagnose
             from .utils import clone_all_template_objects
+            from .models import Theme, TitleFont, BodyFont, SiteConfig
 
             # Before calling clone_all_template_objects
             for model in [Theme, TitleFont, BodyFont, SiteConfig]:
