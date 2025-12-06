@@ -41,7 +41,10 @@ class Tenant(models.Model):
         ]
 
     def __str__(self):
-        return f"{self.name} ({self.domain})"
+        if self.name and self.domain:
+            return f"{self.name} ({self.domain})"
+        else:
+            return "Blank"
 
     def activate(self):
         """
