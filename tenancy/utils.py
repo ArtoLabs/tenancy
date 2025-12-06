@@ -1,67 +1,4 @@
 """
-Utility functions and decorators for tenant management.
-"""
-from django.db import models, transaction
-from django.apps import apps
-from django.forms.models import model_to_dict
-
-from functools import wraps
-from .context import get_current_tenant, set_current_tenant
-import logging
-from collections import defaultdict, deque
-from typing import Dict, List, Optional, Any, Type, Set
-
-logger = logging.getLogger(__name__)
-
-
-def tenant_context(tenant):
-    """
-    Context manager for temporarily setting a tenant context.
-
-    Usage:
-        with tenant_context(my_tenant):
-            # All queries here will be scoped to my_tenant
-            MyModel.objects.all()
-    """
-
-    class TenantContext:
-        def __init__(self, tenant):
-            self.tenant = tenant
-            self.previous_tenant = None
-
-        def __enter__(self):
-            self.previous_tenant = get_current_tenant()
-            set_current_tenant(self.tenant)
-            return self.tenant
-
-        def __exit__(self, exc_type, exc_val, exc_tb):
-            set_current_tenant(self.previous_tenant)
-
-    return TenantContext(tenant)
-
-
-def require_tenant(view_func):
-    """
-    Decorator to ensure a tenant is set before executing a view.
-
-    Usage:
-        @require_tenant
-        def my_view(request):
-            # tenant is guaranteed to be set here
-            pass
-    """
-
-    @wraps(view_func)
-    def wrapper(request, *args, **kwargs):
-        if not hasattr(request, 'tenant') or request.tenant is None:
-            from django.http import HttpResponseForbidden
-            return HttpResponseForbidden('No tenant context available')
-        return view_func(request, *args, **kwargs)
-
-    return wrapper
-
-
-"""
 Utilities for cloning tenant-aware objects with foreign key relationships.
 
 This module provides functionality to clone objects across multiple models
@@ -72,6 +9,16 @@ Supports three cloning modes:
 2. Skeleton clone - Clone the row but set all non-required fields to None
 3. Field-level overrides - Clone with specific field values overridden
 """
+
+import logging
+from collections import defaultdict, deque
+from typing import Dict, List, Optional, Any, Type, Set
+from django.db import models, transaction
+from django.apps import apps
+from django.forms.models import model_to_dict
+
+
+logger = logging.getLogger(__name__)
 
 
 class CloneError(Exception):
@@ -89,9 +36,9 @@ class CyclicDependencyError(CloneError):
 # ============================================================================
 
 def clone_tenant_objects(
-        querysets: Dict[Type[models.Model], models.QuerySet],
-        new_tenant,
-        field_overrides: Optional[Dict[Type[models.Model], Dict[str, Any]]] = None,
+    querysets: Dict[Type[models.Model], models.QuerySet],
+    new_tenant,
+    field_overrides: Optional[Dict[Type[models.Model], Dict[str, Any]]] = None,
 ) -> Dict[Type[models.Model], Dict[int, models.Model]]:
     """
     Clone objects from multiple models in topological order, respecting FK dependencies.
@@ -217,10 +164,10 @@ def clone_tenant_objects(
 # ============================================================================
 
 def _clone_single_object(
-        original_obj: models.Model,
-        new_tenant,
-        clone_map: Dict[Type[models.Model], Dict[int, models.Model]],
-        field_overrides: Dict[str, Any],
+    original_obj: models.Model,
+    new_tenant,
+    clone_map: Dict[Type[models.Model], Dict[int, models.Model]],
+    field_overrides: Dict[str, Any],
 ) -> models.Model:
     """
     Clone a single object, respecting the model's cloning mode and metadata.
@@ -298,7 +245,7 @@ def _clone_single_object(
         data,
         clone_map,
         skip_fk_resolution=(has_field_overrides or
-                            (has_clone_mode and model_class.CLONE_MODE == 'skeleton'))
+                           (has_clone_mode and model_class.CLONE_MODE == 'skeleton'))
     )
 
     # Set the new tenant
@@ -322,9 +269,9 @@ def _clone_single_object(
 # ============================================================================
 
 def _extract_fields_with_model_overrides(
-        original_obj: models.Model,
-        exclude_fields: tuple,
-        clone_field_overrides: Dict[str, Any]
+    original_obj: models.Model,
+    exclude_fields: tuple,
+    clone_field_overrides: Dict[str, Any]
 ) -> Dict[str, Any]:
     """
     Extract fields and apply model-level CLONE_FIELD_OVERRIDES.
@@ -354,8 +301,8 @@ def _extract_fields_with_model_overrides(
 
 
 def _extract_fields_skeleton_mode(
-        original_obj: models.Model,
-        exclude_fields: tuple
+    original_obj: models.Model,
+    exclude_fields: tuple
 ) -> Dict[str, Any]:
     """
     Extract fields in skeleton mode - set all nullable fields to None.
@@ -381,8 +328,8 @@ def _extract_fields_skeleton_mode(
     for field in model_class._meta.get_fields():
         # Skip excluded fields, reverse relations, and many-to-many
         if (field.name in exclude_fields or
-                not hasattr(field, 'get_attname') or
-                field.many_to_many):
+            not hasattr(field, 'get_attname') or
+            field.many_to_many):
             continue
 
         field_name = field.name
@@ -413,11 +360,11 @@ def _extract_fields_skeleton_mode(
 
 
 def _resolve_foreign_keys(
-        original_obj: models.Model,
-        model_class: Type[models.Model],
-        data: Dict[str, Any],
-        clone_map: Dict[Type[models.Model], Dict[int, models.Model]],
-        skip_fk_resolution: bool = False
+    original_obj: models.Model,
+    model_class: Type[models.Model],
+    data: Dict[str, Any],
+    clone_map: Dict[Type[models.Model], Dict[int, models.Model]],
+    skip_fk_resolution: bool = False
 ) -> Dict[str, Any]:
     """
     Resolve foreign key fields to point to newly cloned objects.
@@ -509,7 +456,7 @@ def _get_clone_mode(model_class: Type[models.Model]) -> str:
 # ============================================================================
 
 def _topological_sort_models(
-        models: List[Type[models.Model]]
+    models: List[Type[models.Model]]
 ) -> List[Type[models.Model]]:
     """
     Sort models in topological order based on foreign key dependencies.
@@ -608,7 +555,7 @@ def get_all_tenant_models() -> List[Type[models.Model]]:
     Get all models that use TenantMixin.
 
     Returns:
-        List of model classes that have a 'tenant' field
+        List of concrete (non-abstract) model classes that have a 'tenant' field
 
     Example:
         >>> tenant_models = get_all_tenant_models()
@@ -618,18 +565,23 @@ def get_all_tenant_models() -> List[Type[models.Model]]:
     tenant_models = []
 
     for model in apps.get_models():
+        # Skip abstract models
+        if model._meta.abstract:
+            continue
+
         # Check if model has a tenant field (i.e., uses TenantMixin)
         if hasattr(model, '_is_tenant_model') and model._is_tenant_model():
             tenant_models.append(model)
+            logger.debug(f"Found tenant model: {model.__name__}")
 
     return tenant_models
 
 
 def clone_all_template_objects(
-        new_tenant,
-        template_tenant=None,
-        excluded_models: Optional[List[Type[models.Model]]] = None,
-        field_overrides: Optional[Dict[Type[models.Model], Dict[str, Any]]] = None,
+    new_tenant,
+    template_tenant=None,
+    excluded_models: Optional[List[Type[models.Model]]] = None,
+    field_overrides: Optional[Dict[Type[models.Model], Dict[str, Any]]] = None,
 ) -> Dict[Type[models.Model], Dict[int, models.Model]]:
     """
     Convenience function to clone all template objects for a new tenant.
