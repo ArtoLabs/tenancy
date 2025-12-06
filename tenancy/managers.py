@@ -10,6 +10,7 @@ class TenantQuerySet(models.QuerySet):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self._tenant_filtering_disabled = False
+        self._tenant_filter_applied = False
 
     def filter_by_tenant(self, tenant=None):
         """
@@ -41,28 +42,41 @@ class TenantQuerySet(models.QuerySet):
         """
         clone = super()._chain()
         clone._tenant_filtering_disabled = self._tenant_filtering_disabled
+        clone._tenant_filter_applied = self._tenant_filter_applied
         return clone
 
-    def _fetch_all(self):
+    def _apply_tenant_filter(self):
         """
-        Apply tenant filtering before fetching results.
+        Apply tenant filtering if needed.
+        Called early in the queryset lifecycle.
         """
-        if not self._tenant_filtering_disabled and self.model._is_tenant_model():
-            current_tenant = get_current_tenant()
+        # Don't apply if already applied or if disabled
+        if self._tenant_filter_applied or self._tenant_filtering_disabled:
+            return self
 
-            # Only auto-filter if a tenant is set and not already filtered
-            if current_tenant is not None:
-                # Check if already filtered by tenant
-                if not self._has_tenant_filter():
-                    self.query.add_q(models.Q(tenant=current_tenant))
+        # Check if this is a tenant model
+        if not hasattr(self.model, '_is_tenant_model') or not self.model._is_tenant_model():
+            return self
 
-        super()._fetch_all()
+        # Get current tenant
+        current_tenant = get_current_tenant()
+        if current_tenant is None:
+            # No tenant context - return empty queryset for safety
+            return self.none()
+
+        # Check if already filtered by tenant
+        if self._has_tenant_filter():
+            return self
+
+        # Apply the filter
+        qs = self.filter(tenant=current_tenant)
+        qs._tenant_filter_applied = True
+        return qs
 
     def _has_tenant_filter(self):
         """
         Check if the queryset already has a tenant filter.
         """
-        # Simple check to avoid duplicate filtering
         where = self.query.where
         if hasattr(where, 'children'):
             for child in where.children:
@@ -70,6 +84,33 @@ class TenantQuerySet(models.QuerySet):
                     if child.lhs.target.name == 'tenant':
                         return True
         return False
+
+    # Override key queryset methods to apply tenant filter early
+
+    def iterator(self, chunk_size=None):
+        """Override iterator to apply tenant filter."""
+        qs = self._apply_tenant_filter()
+        return super(TenantQuerySet, qs).iterator(chunk_size=chunk_size)
+
+    def count(self):
+        """Override count to apply tenant filter."""
+        qs = self._apply_tenant_filter()
+        return super(TenantQuerySet, qs).count()
+
+    def exists(self):
+        """Override exists to apply tenant filter."""
+        qs = self._apply_tenant_filter()
+        return super(TenantQuerySet, qs).exists()
+
+    def _fetch_all(self):
+        """Override _fetch_all to apply tenant filter."""
+        if not self._result_cache:
+            qs = self._apply_tenant_filter()
+            if qs is not self:
+                # Filter was applied, use the filtered queryset
+                self.query = qs.query
+                self._tenant_filter_applied = True
+        super()._fetch_all()
 
 
 class TenantManager(models.Manager):
@@ -79,9 +120,13 @@ class TenantManager(models.Manager):
 
     def get_queryset(self):
         """
-        Return a TenantQuerySet instance.
+        Return a TenantQuerySet instance with tenant filtering applied.
         """
-        return TenantQuerySet(self.model, using=self._db)
+        qs = TenantQuerySet(self.model, using=self._db)
+        # Apply tenant filter immediately if this is a tenant model
+        if hasattr(self.model, '_is_tenant_model') and self.model._is_tenant_model():
+            return qs._apply_tenant_filter()
+        return qs
 
     def filter_by_tenant(self, tenant=None):
         """
@@ -93,4 +138,4 @@ class TenantManager(models.Manager):
         """
         Return all records across all tenants.
         """
-        return self.get_queryset().all_tenants()
+        return TenantQuerySet(self.model, using=self._db).all_tenants()
