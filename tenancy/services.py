@@ -126,7 +126,7 @@ class TenantProvisioner:
                     f"  • {model_class.__name__}: {len(cloned_objects)} objects"
                 )
 
-            return tenant, user, clone_map
+            return tenant, user #, clone_map
 
         except Exception as e:
             logger.error(f"Failed to create tenant: {e}", exc_info=True)
