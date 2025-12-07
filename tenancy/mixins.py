@@ -224,12 +224,36 @@ class TenantAdminMixin:
         return True
 
     def has_add_permission(self, request):
-        return self.has_module_permission(request)
+        """
+        Prevent tenant managers from creating new objects.
 
-    def has_change_permission(self, request, obj=None):
-        return self.has_module_permission(request)
+        Only superusers can create objects directly. Tenant managers
+        should only get objects through the tenant provisioning/cloning
+        process when their tenant is created.
+        """
+        # Superusers can create (they manage the template tenant)
+        if request.user.is_superuser:
+            return super().has_add_permission(request)
+
+        # Tenant managers cannot create
+        return False
 
     def has_delete_permission(self, request, obj=None):
+        """
+        Prevent tenant managers from deleting objects.
+
+        Only superusers can delete objects. This prevents tenant managers
+        from accidentally breaking their configuration or deleting objects
+        that were intentionally cloned during provisioning.
+        """
+        # Superusers can delete
+        if request.user.is_superuser:
+            return super().has_delete_permission(request, obj)
+
+        # Tenant managers cannot delete
+        return False
+
+    def has_change_permission(self, request, obj=None):
         return self.has_module_permission(request)
 
     def has_view_permission(self, request, obj=None):
