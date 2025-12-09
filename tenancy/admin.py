@@ -7,6 +7,9 @@ from django.urls import path
 from django.contrib import messages
 from django.utils.html import format_html
 from django.utils.translation import gettext as _
+from django.conf import settings
+from django.utils.module_loading import import_string
+
 from .models import Tenant
 from .forms import TenantCreationForm
 from .services import TenantProvisioner, TenantProvisioningError
@@ -163,8 +166,40 @@ class SuperAdminSite(AdminSite):
 # These are the two admin sites that will be used throughout the application:
 # - super_admin_site: For system administrators at /admin
 # - tenant_admin_site: For tenant managers at /manage
-tenant_admin_site = TenantAdminSite(name='tenant_admin')
-super_admin_site = SuperAdminSite(name='super_admin')
+def get_tenant_admin_site_class():
+    """
+    Get the TenantAdminSite class to use.
+
+    Checks settings.TENANCY_TENANT_ADMIN_SITE_CLASS for a custom class.
+    Falls back to the default TenantAdminSite.
+    """
+    custom_class = getattr(settings, 'TENANCY_TENANT_ADMIN_SITE_CLASS', None)
+    if custom_class:
+        return import_string(custom_class)
+    return TenantAdminSite
+
+
+def get_super_admin_site_class():
+    """
+    Get the SuperAdminSite class to use.
+
+    Checks settings.TENANCY_SUPER_ADMIN_SITE_CLASS for a custom class.
+    Falls back to the default SuperAdminSite.
+    """
+    custom_class = getattr(settings, 'TENANCY_SUPER_ADMIN_SITE_CLASS', None)
+    if custom_class:
+        return import_string(custom_class)
+    return SuperAdminSite
+
+TenantAdminSiteClass = get_tenant_admin_site_class()
+SuperAdminSiteClass = get_super_admin_site_class()
+
+tenant_admin_site = TenantAdminSiteClass(name='tenant_admin')
+super_admin_site = SuperAdminSiteClass(name='super_admin')
+
+
+# tenant_admin_site = TenantAdminSite(name='tenant_admin')
+# super_admin_site = SuperAdminSite(name='super_admin')
 
 
 # Admin for the Tenant model included in this package
