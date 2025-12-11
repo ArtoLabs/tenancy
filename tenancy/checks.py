@@ -42,7 +42,7 @@ def tenant_unique_field_checks(app_configs, **kwargs):
                 # Build example code for warning
                 fields_list_str = ", ".join([f"'{f}'" for f in ["tenant"] + unique_fields])
                 example_code = f"""
-class {model.__name__}(TenantMixin, CloneForTenantMixin):
+class {model.__name__}(TenantMixin):
     # your fields here
 
     class Meta:

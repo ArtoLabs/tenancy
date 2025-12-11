@@ -531,6 +531,401 @@ Superusers bypass ALL restrictions:
 
 ## Advanced Usage
 
+### Customizing Admin Site Classes
+
+The tenancy package allows you to extend or replace the admin site classes to add custom authentication, logging, or other behavior.
+
+#### Why Customize Admin Sites?
+
+You might want to customize the admin sites to:
+- **Add Multi-Factor Authentication (MFA)** - Require 2FA/TOTP before admin access
+- **Implement Passwordless Authentication** - Use magic links or OAuth instead of passwords
+- **Add Custom Login Flows** - Redirect to SSO, check IP allowlists, etc.
+- **Enhance Audit Logging** - Track all admin actions with custom logging
+- **Add Rate Limiting** - Prevent brute force attacks on admin interfaces
+- **Customize Admin UI** - Change branding, add custom dashboard widgets
+
+The package provides hooks to extend both admin sites (`/admin` and `/manage`) with your custom logic while preserving all tenant isolation and provisioning features.
+
+#### How It Works
+
+The tenancy package checks your Django settings for custom admin site classes:
+- `TENANCY_TENANT_ADMIN_SITE_CLASS` - Custom class for tenant admin (`/manage`)
+- `TENANCY_SUPER_ADMIN_SITE_CLASS` - Custom class for super admin (`/admin`)
+
+If these settings are present, the package uses your custom classes. Otherwise, it uses the default `TenantAdminSite` and `SuperAdminSite`.
+
+**Important**: Your custom classes are instantiated **before** any models are registered, so all registrations (including the `Tenant` model and auto-registered `User` model) happen on your custom instances.
+
+#### Example: Adding Multi-Factor Authentication
+
+This example shows how to add MFA (using `django-otp`) to both admin sites:
+
+##### Step 1: Install Dependencies
+
+```bash
+pip install django-otp qrcode
+```
+
+##### Step 2: Create Custom Admin Site Classes
+
+Create a separate file to avoid circular imports:
+
+```python
+# accounts/admin_sites.py
+from django.shortcuts import redirect
+from django_otp import devices_for_user
+from tenancy.admin import TenantAdminSite, SuperAdminSite
+
+
+class MFAMixin:
+    """
+    Mixin to add MFA enforcement to admin sites.
+    
+    This mixin:
+    - Checks if user has registered MFA devices
+    - Verifies MFA token before granting admin access
+    - Redirects to MFA setup/verify views as needed
+    """
+    
+    def has_permission(self, request):
+        """
+        Enforce MFA in addition to standard admin permissions.
+        
+        Permission flow:
+        1. Check standard permissions (active, staff, tenant match)
+        2. Verify user has at least one MFA device registered
+        3. Check that MFA has been verified this session
+        """
+        # First check the parent admin site's permissions
+        if not super().has_permission(request):
+            return False
+        
+        user = request.user
+        
+        # Check if user has registered MFA devices
+        user_devices = list(devices_for_user(user))
+        if not user_devices:
+            return False
+        
+        # Check if MFA verification is still required this session
+        if request.session.get("mfa_required", False):
+            return False
+        
+        return True
+    
+    def login(self, request, extra_context=None):
+        """
+        Override login flow to enforce MFA.
+        
+        Login flow:
+        1. If not authenticated → redirect to login
+        2. If no MFA devices → redirect to setup
+        3. If MFA not verified → redirect to verify
+        4. If all good → redirect to admin index
+        """
+        # If not authenticated, redirect to your login view
+        if not request.user.is_authenticated:
+            return redirect("accounts:login")
+        
+        # Authenticated but not staff - deny access
+        if not (request.user.is_active and request.user.is_staff):
+            return redirect("accounts:profile")
+        
+        # Check if user has MFA devices
+        if not list(devices_for_user(request.user)):
+            # Redirect to MFA setup
+            return redirect("accounts:mfa_setup")
+        
+        # Check if MFA verification is needed
+        if request.session.get("mfa_required", False):
+            # Redirect to MFA verification
+            return redirect("accounts:mfa_verify")
+        
+        # All checks passed - redirect to admin index
+        return redirect(self.index(request))
+
+
+class MFATenantAdminSite(MFAMixin, TenantAdminSite):
+    """
+    Tenant admin site with MFA enforcement.
+    
+    Combines:
+    - Tenant isolation from TenantAdminSite
+    - MFA enforcement from MFAMixin
+    """
+    pass
+
+
+class MFASuperAdminSite(MFAMixin, SuperAdminSite):
+    """
+    Super admin site with MFA enforcement.
+    
+    Combines:
+    - Cross-tenant access from SuperAdminSite
+    - MFA enforcement from MFAMixin
+    """
+    pass
+```
+
+**Why a separate file?** This prevents circular imports. The tenancy package imports your classes during initialization, so they can't be in the same file that imports from the tenancy package.
+
+##### Step 3: Configure Settings
+
+```python
+# settings.py
+
+# Tell tenancy package to use your MFA-enabled admin site classes
+TENANCY_TENANT_ADMIN_SITE_CLASS = 'accounts.admin_sites.MFATenantAdminSite'
+TENANCY_SUPER_ADMIN_SITE_CLASS = 'accounts.admin_sites.MFASuperAdminSite'
+
+# Configure django-otp
+INSTALLED_APPS = [
+    # ...
+    'django_otp',
+    'django_otp.plugins.otp_totp',
+    # ...
+]
+
+MIDDLEWARE = [
+    # ...
+    'django.contrib.auth.middleware.AuthenticationMiddleware',
+    'django_otp.middleware.OTPMiddleware',  # Add after AuthenticationMiddleware
+    'tenancy.middleware.TenantMiddleware',
+    # ...
+]
+```
+
+##### Step 4: Create MFA Views
+
+```python
+# accounts/views.py
+from django.shortcuts import render, redirect
+from django_otp.plugins.otp_totp.models import TOTPDevice
+from django_otp import match_token
+
+def mfa_setup(request):
+    """View to setup MFA device (show QR code)."""
+    if request.method == 'POST':
+        # Create TOTP device
+        device = TOTPDevice.objects.create(
+            user=request.user,
+            name='default',
+            confirmed=True
+        )
+        return redirect('accounts:mfa_verify')
+    
+    return render(request, 'accounts/mfa_setup.html')
+
+def mfa_verify(request):
+    """View to verify MFA token."""
+    if request.method == 'POST':
+        token = request.POST.get('token')
+        device = match_token(request.user, token)
+        
+        if device:
+            # Mark MFA as verified for this session
+            request.session['mfa_required'] = False
+            # Redirect back to admin
+            return redirect(request.GET.get('next', '/admin/'))
+        else:
+            # Token invalid
+            return render(request, 'accounts/mfa_verify.html', {
+                'error': 'Invalid token'
+            })
+    
+    return render(request, 'accounts/mfa_verify.html')
+```
+
+##### Step 5: Register Your Models
+
+```python
+# accounts/admin.py
+from django.contrib import admin
+from tenancy.admin import tenant_admin_site, super_admin_site
+from tenancy.mixins import TenantAdminMixin, SuperUserAdminMixin
+from .models import Profile
+
+# Import the admin sites from tenancy - they're now MFA-enabled!
+# No need to import your MFA classes here
+
+@admin.register(Profile, site=super_admin_site)
+class ProfileSuperAdmin(SuperUserAdminMixin, admin.ModelAdmin):
+    list_display = ('user', 'full_name')
+
+@admin.register(Profile, site=tenant_admin_site)
+class ProfileTenantAdmin(TenantAdminMixin, admin.ModelAdmin):
+    list_display = ('user', 'full_name')
+```
+
+##### Step 6: Use the Admin Sites
+
+```python
+# urls.py
+from tenancy.admin import super_admin_site, tenant_admin_site
+
+urlpatterns = [
+    path('admin/', super_admin_site.urls),    # MFA-protected super admin
+    path('manage/', tenant_admin_site.urls),  # MFA-protected tenant admin
+    # ...
+]
+```
+
+**Result**: Both admin sites now require MFA authentication before granting access, while preserving all tenant isolation and multi-tenant features.
+
+#### Example: Passwordless Authentication
+
+You can also customize the login flow for passwordless authentication:
+
+```python
+# accounts/admin_sites.py
+from django.shortcuts import redirect
+from tenancy.admin import TenantAdminSite, SuperAdminSite
+from .models import LoginLink
+
+
+class PasswordlessMixin:
+    """Mixin for magic link authentication."""
+    
+    def login(self, request, extra_context=None):
+        """Redirect to magic link request instead of password form."""
+        if not request.user.is_authenticated:
+            return redirect("accounts:request_login_link")
+        
+        if not (request.user.is_active and request.user.is_staff):
+            return redirect("accounts:no_permission")
+        
+        return redirect(self.index(request))
+
+
+class PasswordlessTenantAdminSite(PasswordlessMixin, TenantAdminSite):
+    pass
+
+
+class PasswordlessSuperAdminSite(PasswordlessMixin, SuperAdminSite):
+    pass
+```
+
+Then configure:
+
+```python
+# settings.py
+TENANCY_TENANT_ADMIN_SITE_CLASS = 'accounts.admin_sites.PasswordlessTenantAdminSite'
+TENANCY_SUPER_ADMIN_SITE_CLASS = 'accounts.admin_sites.PasswordlessSuperAdminSite'
+```
+
+#### Example: IP Allowlist
+
+Restrict admin access to specific IP addresses:
+
+```python
+# accounts/admin_sites.py
+from django.http import HttpResponseForbidden
+from django.conf import settings
+from tenancy.admin import TenantAdminSite, SuperAdminSite
+
+
+class IPAllowlistMixin:
+    """Restrict admin access to allowed IP addresses."""
+    
+    def has_permission(self, request):
+        if not super().has_permission(request):
+            return False
+        
+        # Get client IP
+        ip = self.get_client_ip(request)
+        
+        # Check against allowlist
+        allowed_ips = getattr(settings, 'ADMIN_ALLOWED_IPS', [])
+        if allowed_ips and ip not in allowed_ips:
+            return False
+        
+        return True
+    
+    def get_client_ip(self, request):
+        """Get client IP from request."""
+        x_forwarded_for = request.META.get('HTTP_X_FORWARDED_FOR')
+        if x_forwarded_for:
+            ip = x_forwarded_for.split(',')[0]
+        else:
+            ip = request.META.get('REMOTE_ADDR')
+        return ip
+
+
+class IPRestrictedTenantAdminSite(IPAllowlistMixin, TenantAdminSite):
+    pass
+
+
+class IPRestrictedSuperAdminSite(IPAllowlistMixin, SuperAdminSite):
+    pass
+```
+
+#### Combining Multiple Customizations
+
+You can combine multiple customizations using multiple inheritance:
+
+```python
+# accounts/admin_sites.py
+from tenancy.admin import TenantAdminSite, SuperAdminSite
+
+
+class MFAMixin:
+    """MFA enforcement."""
+    # ... MFA logic ...
+
+
+class IPAllowlistMixin:
+    """IP restriction."""
+    # ... IP check logic ...
+
+
+class AuditLogMixin:
+    """Audit logging."""
+    def has_permission(self, request):
+        result = super().has_permission(request)
+        # Log the access attempt
+        logger.info(f"Admin access: {request.user} from {request.META['REMOTE_ADDR']}")
+        return result
+
+
+# Combine all three!
+class SecureTenantAdminSite(AuditLogMixin, IPAllowlistMixin, MFAMixin, TenantAdminSite):
+    """Tenant admin with MFA, IP restriction, and audit logging."""
+    pass
+
+
+class SecureSuperAdminSite(AuditLogMixin, IPAllowlistMixin, MFAMixin, SuperAdminSite):
+    """Super admin with MFA, IP restriction, and audit logging."""
+    pass
+```
+
+**MRO (Method Resolution Order)**: Python calls methods from left to right, so mixins are checked before the base admin site class.
+
+#### Troubleshooting Custom Admin Sites
+
+**Circular Import Error**
+
+```
+ImportError: Module "accounts.admin" does not define a "MFATenantAdminSite" attribute/class
+```
+
+**Solution**: Move your custom admin site classes to a separate file (e.g., `admin_sites.py`) that doesn't import from `tenancy.admin`. Your `admin.py` can import from tenancy, but your `admin_sites.py` should only import the base classes.
+
+**Settings Not Being Applied**
+
+If your custom classes aren't being used, check:
+1. Settings path is correct: `'app_name.module_name.ClassName'`
+2. Settings are loaded before Django initialization
+3. No typos in setting names
+4. Module is importable: `python -c "from accounts.admin_sites import MFATenantAdminSite"`
+
+**Models Not Registered**
+
+If the `Tenant` model or `User` model isn't showing up:
+1. Verify your custom classes inherit from `TenantAdminSite` and `SuperAdminSite`
+2. Check that the tenancy package loaded successfully: `python manage.py check`
+3. Look for errors in startup logs
+
 ### Custom Cloning Logic
 
 For complex cloning scenarios, override the cloning methods:

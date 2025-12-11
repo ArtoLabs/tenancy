@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "tenancy"
-version = "0.2.0"
+version = "0.8.0"
 description = "Lightweight row-level multi-tenancy for Django with MySQL"
 readme = "README.md"
 requires-python = ">=3.8"

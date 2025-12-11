@@ -20,16 +20,29 @@ class TenantMiddleware(MiddlewareMixin):
         logger.debug(f"Full host header: {request.get_host()}")
         logger.debug(f"Request path: {request.path}")
 
+        # Allow super admin access without tenant resolution
+        # This is crucial for:
+        # 1. Initial setup when no tenants exist yet
+        # 2. Creating the first tenant
+        # 3. System-wide administration
+        super_admin_path = getattr(settings, 'TENANCY_SUPER_ADMIN_PATH', '/admin/')
+        if request.path.startswith(super_admin_path):
+            logger.info(f"Super admin path detected, skipping tenant resolution")
+            # Don't set a tenant, but allow the request to proceed
+            # SuperAdminSite.has_permission() will check if user is superuser
+            return None
+
+        # For all other paths, tenant resolution is required
         try:
             tenant = Tenant.objects.get(domain=hostname, is_active=True)
             set_current_tenant(tenant)
             request.tenant = tenant
             logger.info(f"Tenant '{tenant.name}' (domain: {hostname}) set for request")
 
-            # Debug logging for admin access (only if user is available)
+            # Debug logging for tenant admin access
             if request.path.startswith('/manage/') and hasattr(request, 'user'):
                 user_info = f"{request.user.username} (tenant: {getattr(request.user, 'tenant', 'N/A')})" if request.user.is_authenticated else 'Anonymous'
-                logger.info(f"Admin access attempt - User: {user_info}, Request Tenant: {tenant.name}")
+                logger.info(f"Tenant admin access attempt - User: {user_info}, Request Tenant: {tenant.name}")
 
         except Tenant.DoesNotExist:
             logger.error(
@@ -64,6 +77,13 @@ class TenantMiddleware(MiddlewareMixin):
                     f"<li>Verify the tenant exists in the database with the correct domain</li>"
                     f"<li>Check that the tenant's is_active field is True</li>"
                     f"<li>If using /etc/hosts, ensure entries are correct and you're using the mapped domain</li>"
+                    f"</ul>"
+                    f"<h3>Setting Up Your First Tenant:</h3>"
+                    f"<ul>"
+                    f"<li>Access the super admin at: <a href='/admin/'>/admin/</a> (works without tenant)</li>"
+                    f"<li>Login with your superuser account</li>"
+                    f"<li>Create your first tenant using the 'Create Tenant' button</li>"
+                    f"<li>Then access the tenant admin at the domain you configured</li>"
                     f"</ul>"
                 )
             else:
