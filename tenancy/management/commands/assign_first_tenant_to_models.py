@@ -2,9 +2,9 @@ from django.core.management.base import BaseCommand
 from django.contrib.auth import get_user_model
 from django.db import transaction
 from django.apps import apps
+from django.db import models
 
 from tenancy.mixins import TenantMixin
-
 from tenancy.models import Tenant
 
 User = get_user_model()
@@ -34,7 +34,13 @@ class Command(BaseCommand):
             return
 
         for model in tenanted_models:
-            updated_count = model.objects.filter(tenant__isnull=True).update(tenant=tenant)
+            # Use the base manager to bypass tenant filtering
+            base_manager = models.Manager()
+            base_manager.model = model
+
+            # Query directly without tenant filtering
+            updated_count = model._base_manager.filter(tenant__isnull=True).update(tenant=tenant)
+
             self.stdout.write(
                 self.style.SUCCESS(
                     f'Assigned {updated_count} objects in {model._meta.label} to tenant "{tenant.name}"'
