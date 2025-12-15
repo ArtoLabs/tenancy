@@ -1,5 +1,6 @@
 from django.db import models
 from django.forms.models import model_to_dict
+from django.conf import settings
 
 from .managers import TenantManager
 from .models import Tenant
@@ -79,16 +80,25 @@ class TenantMixin(models.Model):
     def save(self, *args, **kwargs):
         """
         Override save to automatically set tenant from context if not set.
+        If TENANT_BOOTSTRAP=True and no tenant is in context, use the first tenant.
         """
         if not self.tenant_id:
             from .context import get_current_tenant
             current_tenant = get_current_tenant()
 
             if current_tenant is None:
-                raise ValueError(
-                    f"Cannot save {self.__class__.__name__} without an active tenant. "
-                    "Either set the tenant explicitly or ensure middleware is active."
-                )
+                if getattr(settings, "TENANT_BOOTSTRAP", False):
+                    from .models import Tenant  # Adjust if your Tenant model is elsewhere
+                    current_tenant = Tenant.objects.first()
+                    if current_tenant is None:
+                        raise ValueError(
+                            f"No tenants exist in the database to bootstrap {self.__class__.__name__}."
+                        )
+                else:
+                    raise ValueError(
+                        f"Cannot save {self.__class__.__name__} without an active tenant. "
+                        "Either set the tenant explicitly or ensure middleware is active."
+                    )
 
             self.tenant = current_tenant
 
