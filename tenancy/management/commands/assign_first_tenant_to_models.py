@@ -5,6 +5,8 @@ from django.apps import apps
 
 from tenancy.mixins import TenantMixin
 
+from tenancy.tenancy.models import Tenant
+
 User = get_user_model()
 
 
@@ -13,6 +15,8 @@ class Command(BaseCommand):
 
     @transaction.atomic
     def handle(self, *args, **options):
+
+        tenant = Tenant.objects.first()
 
         # --- Step 4: Detect all models that use TenantAdminMixin ---
         tenanted_models = [

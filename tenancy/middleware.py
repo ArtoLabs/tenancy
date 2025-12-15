@@ -25,14 +25,15 @@ class TenantMiddleware(MiddlewareMixin):
         # 1. Initial setup when no tenants exist yet
         # 2. Creating the first tenant
         # 3. System-wide administration
-        skip_tenant_paths = getattr(settings, 'TENANCY_SKIP_TENANT_PATHS', ['/admin/'])
+        if settings.TENANCY_BOOTSTRAP:
+            skip_tenant_paths = getattr(settings, 'TENANCY_SKIP_TENANT_PATHS', ['/admin/'])
 
-        for skip_path in skip_tenant_paths:
-            if request.path.startswith(skip_path):
-                logger.info(f"Path '{request.path}' matches skip pattern '{skip_path}', skipping tenant resolution")
-                # Don't set a tenant, but allow the request to proceed
-                # The admin site's has_permission() will still check authentication
-                return None
+            for skip_path in skip_tenant_paths:
+                if request.path.startswith(skip_path):
+                    logger.info(f"Path '{request.path}' matches skip pattern '{skip_path}', skipping tenant resolution")
+                    # Don't set a tenant, but allow the request to proceed
+                    # The admin site's has_permission() will still check authentication
+                    return None
 
         # For all other paths, tenant resolution is required
         try:
