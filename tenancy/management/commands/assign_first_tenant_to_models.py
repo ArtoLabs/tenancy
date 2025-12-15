@@ -5,7 +5,7 @@ from django.apps import apps
 
 from tenancy.mixins import TenantMixin
 
-from tenancy.tenancy.models import Tenant
+from tenancy.models import Tenant
 
 User = get_user_model()
 
