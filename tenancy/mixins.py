@@ -87,7 +87,7 @@ class TenantMixin(models.Model):
             current_tenant = get_current_tenant()
 
             if current_tenant is None:
-                if getattr(settings, "TENANT_BOOTSTRAP", False):
+                if getattr(settings, "TENANCY_BOOTSTRAP", False):
                     from .models import Tenant  # Adjust if your Tenant model is elsewhere
                     current_tenant = Tenant.objects.first()
                     if current_tenant is None:
