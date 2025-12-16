@@ -126,6 +126,11 @@ def clone_tenant_objects(
                 # Skip models that weren't requested for cloning
                 continue
 
+            clone_mode = _get_clone_mode(model)
+            if clone_mode == 'none':
+                logger.info(f"Skipping {model.__name__} - CLONE_MODE='none'")
+                continue
+
             queryset = querysets[model]
             overrides = field_overrides.get(model, {})
 
