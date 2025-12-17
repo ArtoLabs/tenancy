@@ -2,7 +2,6 @@
 from django.core.checks import Warning, register
 from django.apps import apps
 from tenancy.mixins import TenantMixin
-from django.db import models
 
 
 @register()

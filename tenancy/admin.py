@@ -242,21 +242,7 @@ class TenantAdmin(admin.ModelAdmin):
 #
 # This section implements the core feature of the tenancy package: automatic
 # detection and registration of user admin classes.
-#
-# WHY THIS IS NECESSARY:
-# - Each Django project defines its own custom User model with different fields
-# - We can't hardcode a UserAdmin because we don't know what fields exist
-# - Projects shouldn't have to write their own UserAdmin (plug-and-play goal)
-# - We need TWO different UserAdmin classes (one for each admin site)
-#
-# HOW IT WORKS:
-# 1. Inspect the project's User model using get_user_model()
-# 2. Detect which fields exist (username, email, tenant, etc.)
-# 3. Dynamically build admin configuration (list_display, fieldsets, etc.)
-# 4. Create TWO admin classes with different behaviors
-# 5. Auto-register both classes when this module loads
-#
-# =============================================================================
+
 
 def create_dynamic_user_admin():
     """

@@ -25,54 +25,6 @@ class TenantProvisioner:
     def create_tenant(tenant_data: dict, admin_data: dict):
         """
         Create a new tenant with admin user and clone all template objects.
-
-        This method:
-        1. Creates the tenant record
-        2. Creates the admin user for the tenant
-        3. Automatically clones all template objects from the template tenant
-        4. Respects each model's cloning mode (full/skeleton/field overrides)
-        5. Handles foreign key dependencies automatically
-
-        Args:
-            tenant_data: Dictionary with tenant information
-                {
-                    'name': str,
-                    'domain': str,
-                    'is_active': bool (optional, default=True)
-                }
-
-            admin_data: Dictionary with admin user information
-                {
-                    'username': str,
-                    'email': str,
-                    'password': str
-                }
-
-        Returns:
-            Tuple of (tenant, user, clone_map)
-            - tenant: The created Tenant instance
-            - user: The created admin User instance
-            - clone_map: Dictionary mapping model classes to cloned objects
-
-        Raises:
-            TenantProvisioningError: If tenant creation or cloning fails
-
-        Example:
-            >>> tenant_data = {
-            ...     'name': 'Acme Corp',
-            ...     'domain': 'acme.example.com',
-            ...     'is_active': True
-            ... }
-            >>> admin_data = {
-            ...     'username': 'admin@acme.com',
-            ...     'email': 'admin@acme.com',
-            ...     'password': 'secure_password_123'
-            ... }
-            >>> tenant, user, cloned = TenantProvisioner.create_tenant(
-            ...     tenant_data, admin_data
-            ... )
-            >>> print(f"Created tenant: {tenant.name}")
-            >>> print(f"Cloned {sum(len(objs) for objs in cloned.values())} objects")
         """
         try:
             # Step 1: Create the tenant
@@ -142,39 +94,7 @@ class TenantProvisioner:
             field_overrides: dict = None,
             excluded_models: list = None
     ):
-        """
-        Create a tenant with custom field overrides for specific models.
 
-        Use this method when you need to override specific fields during cloning
-        beyond what's defined in model-level metadata.
-
-        Args:
-            tenant_data: Tenant information dictionary
-            admin_data: Admin user information dictionary
-            field_overrides: Dictionary mapping model classes to field overrides
-                Example: {
-                    SiteConfiguration: {'is_default': True},
-                    Theme: {'name': 'Custom Theme'}
-                }
-            excluded_models: List of model classes to skip cloning
-                Example: [LargeMediaFile, DeprecatedModel]
-
-        Returns:
-            Tuple of (tenant, user, clone_map)
-
-        Example:
-            >>> from myapp.models import SiteConfiguration, Theme
-            >>>
-            >>> tenant, user, cloned = TenantProvisioner.create_tenant_with_custom_overrides(
-            ...     tenant_data={'name': 'Custom Corp', 'domain': 'custom.example.com'},
-            ...     admin_data={'username': 'admin', 'password': 'pass123'},
-            ...     field_overrides={
-            ...         SiteConfiguration: {'is_default': True, 'custom_field': 'value'},
-            ...         Theme: {'name': 'Branded Theme'}
-            ...     },
-            ...     excluded_models=[LargeMediaFile]
-            ... )
-        """
         try:
             # Create tenant and admin user
             logger.info(f"Creating tenant with custom overrides: {tenant_data['name']}")
@@ -219,20 +139,6 @@ class TenantProvisioner:
     def get_cloning_preview():
         """
         Preview which models will be cloned and their cloning modes.
-
-        Useful for debugging or documentation purposes to see what will
-        happen when a new tenant is created.
-
-        Returns:
-            List of dictionaries with model information
-
-        Example:
-            >>> preview = TenantProvisioner.get_cloning_preview()
-            >>> for info in preview:
-            ...     print(f"{info['model']}: {info['mode']} ({info['count']} objects)")
-            Theme: full (5 objects)
-            Font: full (10 objects)
-            SiteConfiguration: skeleton (1 objects)
         """
         from .utils import get_all_tenant_models, _get_clone_mode
         from .models import Tenant
@@ -272,16 +178,6 @@ class TenantProvisioner:
     def log_cloning_preview():
         """
         Log a preview of what will be cloned to the console.
-
-        Example output:
-            ╔════════════════════════════════════════════════════════╗
-            ║          TENANT CLONING PREVIEW                        ║
-            ╚════════════════════════════════════════════════════════╝
-
-            Font (10 objects) → full clone
-            Theme (5 objects) → full clone
-            SiteConfiguration (1 objects) → skeleton clone
-              ↳ Overrides: title_font=None, body_font=None
         """
         preview = TenantProvisioner.get_cloning_preview()
 

@@ -9,22 +9,6 @@ from .models import Tenant
 class TenantUserMixin(models.Model):
     """
     Mixin to add tenant field to custom user models.
-
-    Projects should add this to their custom user model to enable
-    multi-tenancy support for users.
-
-    Usage:
-        from django.contrib.auth.models import AbstractUser
-        from tenancy.mixins import TenantUserMixin
-
-        class User(TenantUserMixin, AbstractUser):
-            # Your custom fields here
-            pass
-
-    The tenant field is:
-    - nullable: Allows creation of superusers without a tenant
-    - blank: Allows forms to be submitted without a tenant
-    - PROTECT: Prevents deletion of a tenant that has users
     """
     tenant = models.ForeignKey(
         Tenant,
@@ -41,20 +25,7 @@ class TenantUserMixin(models.Model):
 class TenantMixin(models.Model):
     """
     Mixin to add tenant support and cloning capabilities to any Django model.
-
-    This mixin provides:
-    - A foreign key to the Tenant model
-    - A custom manager (TenantManager) with tenant-aware methods
-    - Automatic tenant assignment on save
-    - Helper method to identify tenant models
-    - Ability to clone template objects (tenant=None) for new tenants
-
-    Usage:
-        class MyModel(TenantMixin):
-            name = models.CharField(max_length=100)
-            # ... other fields
     """
-
     tenant = models.ForeignKey(
         Tenant,
         on_delete=models.CASCADE,
@@ -162,29 +133,12 @@ class TenantMixin(models.Model):
 class TenantAdminMixin:
     """
     Mixin for ModelAdmin classes that should be tenant-scoped in TenantAdminSite.
-
-    This mixin provides complete tenant isolation for the admin interface by:
-    - Filtering querysets to show only objects belonging to current tenant
-    - Automatically setting tenant on new objects
-    - Enforcing tenant-based permissions
-    - Filtering foreign key choices to current tenant
-    - Hiding the tenant field from forms (it's auto-set)
-
-    Usage in project's admin.py:
-        from tenancy.admin import tenant_admin_site
-        from tenancy.mixins import TenantAdminMixin
-
-        @admin.register(MyModel, site=tenant_admin_site)
-        class MyModelAdmin(TenantAdminMixin, admin.ModelAdmin):
-            list_display = ['name', 'description']
-
     IMPORTANT: Always use this with tenant_admin_site, not the default admin site.
     """
 
     def get_queryset(self, request):
         """
         Filter queryset to current tenant's objects.
-
         This is the core of tenant isolation - tenant managers can only
         see objects belonging to their tenant, never objects from other tenants.
         """
@@ -197,15 +151,6 @@ class TenantAdminMixin:
     def save_model(self, request, obj, form, change):
         """
         Automatically set tenant on new objects.
-
-        When a tenant manager creates a new object, we automatically assign
-        their tenant. They shouldn't be able to create objects for other tenants.
-
-        Args:
-            request: The HttpRequest
-            obj: The model instance being saved
-            form: The ModelForm instance
-            change: Boolean indicating if this is an update (True) or create (False)
         """
         if hasattr(obj, 'tenant') and not change:
             if not getattr(obj, 'tenant_id', None):
@@ -215,13 +160,6 @@ class TenantAdminMixin:
     def has_module_permission(self, request):
         """
         Check if user has permission to access this module.
-
-        Permission requirements:
-        1. User must be active and staff
-        2. Request must have a tenant (set by middleware)
-        3. Either user is superuser OR user belongs to the request's tenant
-
-        This prevents users from accessing the admin for other tenants.
         """
         if not request.user.is_active or not request.user.is_staff:
             return False
@@ -236,10 +174,6 @@ class TenantAdminMixin:
     def has_add_permission(self, request):
         """
         Prevent tenant managers from creating new objects.
-
-        Only superusers can create objects directly. Tenant managers
-        should only get objects through the tenant provisioning/cloning
-        process when their tenant is created.
         """
         # Superusers can create (they manage the template tenant)
         if request.user.is_superuser:
@@ -251,10 +185,6 @@ class TenantAdminMixin:
     def has_delete_permission(self, request, obj=None):
         """
         Prevent tenant managers from deleting objects.
-
-        Only superusers can delete objects. This prevents tenant managers
-        from accidentally breaking their configuration or deleting objects
-        that were intentionally cloned during provisioning.
         """
         # Superusers can delete
         if request.user.is_superuser:
@@ -272,9 +202,6 @@ class TenantAdminMixin:
     def get_exclude(self, request, obj=None):
         """
         Exclude tenant field from forms - it's set automatically.
-
-        Tenant managers shouldn't see or manipulate the tenant field directly.
-        It's automatically assigned based on their tenant context.
         """
         exclude = list(super().get_exclude(request, obj) or [])
         if hasattr(self.model, 'tenant') and 'tenant' not in exclude:
@@ -284,20 +211,10 @@ class TenantAdminMixin:
     def formfield_for_foreignkey(self, db_field, request, **kwargs):
         """
         Filter foreign key choices to only show objects from current tenant.
-
         This ensures tenant isolation extends to related objects. For example,
         if a Product has a foreign key to Category, the dropdown will only
         show categories from the current tenant.
-
         Only applies to models that use TenantMixin (checked via _is_tenant_model).
-
-        Args:
-            db_field: The foreign key field being rendered
-            request: The HttpRequest
-            **kwargs: Additional arguments for the form field
-
-        Returns:
-            FormField configured with tenant-filtered queryset
         """
         model = db_field.remote_field.model
 
@@ -313,22 +230,10 @@ class TenantAdminMixin:
 class SuperUserAdminMixin:
     """
     Mixin for ModelAdmin classes in SuperAdminSite.
-
     This mixin provides cross-tenant visibility for system administrators by:
     - Showing tenant field as readonly
     - Adding tenant_display to list view with ID and domain
     - Showing all objects across all tenants (no filtering)
-
-    Usage in package's admin.py:
-        from tenancy.admin import super_admin_site
-        from tenancy.mixins import SuperUserAdminMixin
-
-        @admin.register(MyModel, site=super_admin_site)
-        class MyModelSuperAdmin(SuperUserAdminMixin, admin.ModelAdmin):
-            list_display = ['name', 'description']
-            # tenant_display is added automatically
-
-    IMPORTANT: Always use this with super_admin_site, not tenant_admin_site.
     """
 
     readonly_fields = ('tenant',)
@@ -336,21 +241,6 @@ class SuperUserAdminMixin:
     def tenant_display(self, obj):
         """
         Display tenant information in list view with ID and domain.
-
-        Format: "ID – domain.com"
-        Examples:
-        - "1 – acme.example.com"
-        - "42 – widgets.example.com"
-        - "-" (if no tenant)
-
-        This helps superusers quickly identify which tenant owns each object
-        and provides the domain for easy reference.
-
-        Args:
-            obj: The model instance
-
-        Returns:
-            str: Formatted tenant display string
         """
         if hasattr(obj, 'tenant') and obj.tenant:
             return f"{obj.tenant.id} – {obj.tenant.domain}"
@@ -361,12 +251,6 @@ class SuperUserAdminMixin:
     def get_list_display(self, request):
         """
         Add tenant_display to list view.
-
-        This automatically adds the tenant column to any admin using this mixin,
-        so superusers always see which tenant each object belongs to.
-
-        The tenant column is added at the end to avoid disrupting the natural
-        order of model-specific fields.
         """
         base = list(super().get_list_display(request))
         if 'tenant_display' not in base:
