@@ -59,3 +59,10 @@ class Tenant(models.Model):
         """
         from .context import clear_current_tenant
         clear_current_tenant()
+
+
+# Import TenancyRole from roles module to make it part of models
+# This allows it to be included in migrations
+from .roles import TenancyRole
+
+__all__ = ['Tenant', 'TenancyRole']

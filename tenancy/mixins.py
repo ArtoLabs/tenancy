@@ -1,14 +1,18 @@
 from django.db import models
 from django.forms.models import model_to_dict
 from django.conf import settings
+from django.utils.translation import gettext_lazy as _
 
 from .managers import TenantManager
 from .models import Tenant
+from .roles import roles
 
 
 class TenantUserMixin(models.Model):
     """
     Mixin to add tenant field to custom user models.
+
+    REMOVED: is_superadmin field (was redundant with tenancy roles)
     """
     tenant = models.ForeignKey(
         Tenant,
@@ -36,10 +40,8 @@ class TenantMixin(models.Model):
         blank=True,
     )
 
-    # Use custom manager that provides tenant-aware query methods
     objects = TenantManager()
 
-    # Fields to exclude when cloning objects
     CLONE_EXCLUDE_FIELDS = ("id", "pk")
 
     class Meta:
@@ -51,7 +53,6 @@ class TenantMixin(models.Model):
     def save(self, *args, **kwargs):
         """
         Override save to automatically set tenant from context if not set.
-        If TENANT_BOOTSTRAP=True and no tenant is in context, use the first tenant.
         """
         if not self.tenant_id:
             from .context import get_current_tenant
@@ -59,7 +60,7 @@ class TenantMixin(models.Model):
 
             if current_tenant is None:
                 if getattr(settings, "TENANCY_BOOTSTRAP", False):
-                    from .models import Tenant  # Adjust if your Tenant model is elsewhere
+                    from .models import Tenant
                     current_tenant = Tenant.objects.first()
                     if current_tenant is None:
                         raise ValueError(
@@ -81,10 +82,6 @@ class TenantMixin(models.Model):
         Helper method to identify if a model uses the tenant mixin.
         """
         return hasattr(cls, 'tenant')
-
-    # ------------------------------
-    # Cloning methods from CloneForTenantMixin
-    # ------------------------------
 
     @classmethod
     def get_template_queryset(cls):
@@ -109,14 +106,11 @@ class TenantMixin(models.Model):
 
         data = model_to_dict(self, exclude=self.CLONE_EXCLUDE_FIELDS)
 
-        # Fetch the Tenant instance
         tenant_instance = Tenant.objects.get(id=new_tenant_id)
-        data["tenant"] = tenant_instance  # assign instance, not ID
+        data["tenant"] = tenant_instance
 
-        # Apply any overrides
         data.update(overrides)
 
-        # Create and return cloned object
         return self.__class__.objects.create(**data)
 
     @classmethod
@@ -133,14 +127,13 @@ class TenantMixin(models.Model):
 class TenantAdminMixin:
     """
     Mixin for ModelAdmin classes that should be tenant-scoped in TenantAdminSite.
-    IMPORTANT: Always use this with tenant_admin_site, not the default admin site.
+
+    CHANGED: Replaced is_staff and is_superuser checks with tenancy role checks.
     """
 
     def get_queryset(self, request):
         """
         Filter queryset to current tenant's objects.
-        This is the core of tenant isolation - tenant managers can only
-        see objects belonging to their tenant, never objects from other tenants.
         """
         qs = super().get_queryset(request)
         if hasattr(request, 'tenant') and request.tenant:
@@ -160,23 +153,27 @@ class TenantAdminMixin:
     def has_module_permission(self, request):
         """
         Check if user has permission to access this module.
+
+        CHANGED: Uses tenantmanager role instead of is_staff/is_superuser.
         """
-        if not request.user.is_active or not request.user.is_staff:
+        if not request.user.is_active:
             return False
+
         if not hasattr(request, 'tenant') or request.tenant is None:
             return False
-        if request.user.is_superuser:
-            return True
-        if hasattr(request.user, 'tenant'):
-            return request.user.tenant == request.tenant
-        return True
+
+        # Check if user has tenant manager role for this tenant
+        return roles.is_tenant_manager(request.user, request.tenant)
 
     def has_add_permission(self, request):
         """
-        Prevent tenant managers from creating new objects.
+        Control add permission.
+
+        CHANGED: Tenant admins (not Django superusers) can add objects.
+        Tenant managers cannot.
         """
-        # Superusers can create (they manage the template tenant)
-        if request.user.is_superuser:
+        # Tenant admins can create (they manage the template tenant)
+        if roles.is_tenant_admin(request.user):
             return super().has_add_permission(request)
 
         # Tenant managers cannot create
@@ -184,19 +181,28 @@ class TenantAdminMixin:
 
     def has_delete_permission(self, request, obj=None):
         """
-        Prevent tenant managers from deleting objects.
+        Control delete permission.
+
+        CHANGED: Tenant admins (not Django superusers) can delete objects.
+        Tenant managers cannot.
         """
-        # Superusers can delete
-        if request.user.is_superuser:
+        # Tenant admins can delete
+        if roles.is_tenant_admin(request.user):
             return super().has_delete_permission(request, obj)
 
         # Tenant managers cannot delete
         return False
 
     def has_change_permission(self, request, obj=None):
+        """
+        Control change permission.
+        """
         return self.has_module_permission(request)
 
     def has_view_permission(self, request, obj=None):
+        """
+        Control view permission.
+        """
         return self.has_module_permission(request)
 
     def get_exclude(self, request, obj=None):
@@ -211,14 +217,9 @@ class TenantAdminMixin:
     def formfield_for_foreignkey(self, db_field, request, **kwargs):
         """
         Filter foreign key choices to only show objects from current tenant.
-        This ensures tenant isolation extends to related objects. For example,
-        if a Product has a foreign key to Category, the dropdown will only
-        show categories from the current tenant.
-        Only applies to models that use TenantMixin (checked via _is_tenant_model).
         """
         model = db_field.remote_field.model
 
-        # Only apply tenant filtering to tenant-aware models
         if hasattr(model, "_is_tenant_model") and model._is_tenant_model():
             tenant = getattr(request, 'tenant', None)
             if tenant:
@@ -230,10 +231,9 @@ class TenantAdminMixin:
 class SuperUserAdminMixin:
     """
     Mixin for ModelAdmin classes in SuperAdminSite.
-    This mixin provides cross-tenant visibility for system administrators by:
-    - Showing tenant field as readonly
-    - Adding tenant_display to list view with ID and domain
-    - Showing all objects across all tenants (no filtering)
+
+    UNCHANGED: This mixin's functionality (display tenant info) doesn't depend
+    on permission checks, so no changes needed.
     """
 
     readonly_fields = ('tenant',)
