@@ -10,7 +10,7 @@ Roles:
 """
 
 from django.db import models
-from django.contrib.auth import get_user_model
+from django.conf import settings
 from django.core.exceptions import ValidationError
 
 
@@ -31,7 +31,7 @@ class TenancyRole(models.Model):
     ]
 
     user = models.ForeignKey(
-        get_user_model(),
+        settings.AUTH_USER_MODEL,
         on_delete=models.CASCADE,
         related_name='tenancy_roles',
         help_text="User who has this tenancy role"
@@ -55,7 +55,7 @@ class TenancyRole(models.Model):
 
     assigned_at = models.DateTimeField(auto_now_add=True)
     assigned_by = models.ForeignKey(
-        get_user_model(),
+        settings.AUTH_USER_MODEL,
         on_delete=models.SET_NULL,
         null=True,
         blank=True,
@@ -85,7 +85,7 @@ class TenancyRole(models.Model):
         if self.role == self.TENANT_ADMIN and self.tenant:
             raise ValidationError({
                 'tenant': 'Tenant admin role cannot be assigned to a specific tenant. '
-                          'Tenant admins have system-wide access.'
+                         'Tenant admins have system-wide access.'
             })
 
         # Tenant managers should be tied to specific tenants
