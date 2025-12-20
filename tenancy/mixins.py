@@ -128,12 +128,18 @@ class TenantAdminMixin:
     """
     Mixin for ModelAdmin classes that should be tenant-scoped in TenantAdminSite.
 
-    CHANGED: Replaced is_staff and is_superuser checks with tenancy role checks.
+    CRITICAL: This mixin is ONLY for use with tenant_admin_site (the /manage site).
+    It enforces that ONLY tenant managers can access these models.
+
+    CHANGED: All permission methods now explicitly check for tenantmanager role
+    and DENY access to tenantadmin role (they should use super_admin_site instead).
     """
 
     def get_queryset(self, request):
         """
         Filter queryset to current tenant's objects.
+        This is the core of tenant isolation - tenant managers can only
+        see objects belonging to their tenant, never objects from other tenants.
         """
         qs = super().get_queryset(request)
         if hasattr(request, 'tenant') and request.tenant:
@@ -154,7 +160,8 @@ class TenantAdminMixin:
         """
         Check if user has permission to access this module.
 
-        CHANGED: Uses tenantmanager role instead of is_staff/is_superuser.
+        CRITICAL CHANGE: This now ONLY allows tenant managers.
+        Tenant admins should NOT have access to tenant-scoped admin.
         """
         if not request.user.is_active:
             return False
@@ -162,46 +169,49 @@ class TenantAdminMixin:
         if not hasattr(request, 'tenant') or request.tenant is None:
             return False
 
-        # Check if user has tenant manager role for this tenant
+        # ONLY tenant managers can access tenant admin
+        # Tenant admins should use super admin site instead
         return roles.is_tenant_manager(request.user, request.tenant)
 
     def has_add_permission(self, request):
         """
         Control add permission.
 
-        CHANGED: Tenant admins (not Django superusers) can add objects.
-        Tenant managers cannot.
+        CHANGED: Only tenant managers can add (if they have module permission).
+        Tenant admins should NOT be adding via tenant admin site.
         """
-        # Tenant admins can create (they manage the template tenant)
-        if roles.is_tenant_admin(request.user):
-            return super().has_add_permission(request)
+        # Only allow if user has module permission (i.e., is tenant manager)
+        if not self.has_module_permission(request):
+            return False
 
-        # Tenant managers cannot create
-        return False
+        return super().has_add_permission(request)
 
     def has_delete_permission(self, request, obj=None):
         """
         Control delete permission.
 
-        CHANGED: Tenant admins (not Django superusers) can delete objects.
-        Tenant managers cannot.
+        CHANGED: Only tenant managers can delete (if they have module permission).
+        Tenant admins should NOT be deleting via tenant admin site.
         """
-        # Tenant admins can delete
-        if roles.is_tenant_admin(request.user):
-            return super().has_delete_permission(request, obj)
+        # Only allow if user has module permission (i.e., is tenant manager)
+        if not self.has_module_permission(request):
+            return False
 
-        # Tenant managers cannot delete
-        return False
+        return super().has_delete_permission(request, obj)
 
     def has_change_permission(self, request, obj=None):
         """
         Control change permission.
+
+        CHANGED: Only tenant managers can change.
         """
         return self.has_module_permission(request)
 
     def has_view_permission(self, request, obj=None):
         """
         Control view permission.
+
+        CHANGED: Only tenant managers can view.
         """
         return self.has_module_permission(request)
 
@@ -232,11 +242,67 @@ class SuperUserAdminMixin:
     """
     Mixin for ModelAdmin classes in SuperAdminSite.
 
-    UNCHANGED: This mixin's functionality (display tenant info) doesn't depend
-    on permission checks, so no changes needed.
+    CRITICAL CHANGE: Added full permission checking to enforce that ONLY
+    tenant admins can access models in the super admin site.
+
+    This mixin now provides:
+    - Tenant admin role verification for all permission checks
+    - Cross-tenant visibility for system administrators
+    - Tenant field display in list views
     """
 
     readonly_fields = ('tenant',)
+
+    def has_module_permission(self, request):
+        """
+        Check if user has permission to access this module in super admin.
+
+        NEW: Only tenant admins can access super admin modules.
+        This is the critical permission check that was missing!
+        """
+        if not request.user.is_active:
+            return False
+
+        # ONLY tenant admins can access super admin site
+        return roles.is_tenant_admin(request.user)
+
+    def has_add_permission(self, request):
+        """
+        Control add permission in super admin.
+
+        NEW: Only tenant admins can add objects.
+        """
+        if not self.has_module_permission(request):
+            return False
+
+        return super().has_add_permission(request)
+
+    def has_change_permission(self, request, obj=None):
+        """
+        Control change permission in super admin.
+
+        NEW: Only tenant admins can change objects.
+        """
+        return self.has_module_permission(request)
+
+    def has_delete_permission(self, request, obj=None):
+        """
+        Control delete permission in super admin.
+
+        NEW: Only tenant admins can delete objects.
+        """
+        if not self.has_module_permission(request):
+            return False
+
+        return super().has_delete_permission(request, obj)
+
+    def has_view_permission(self, request, obj=None):
+        """
+        Control view permission in super admin.
+
+        NEW: Only tenant admins can view objects.
+        """
+        return self.has_module_permission(request)
 
     def tenant_display(self, obj):
         """
