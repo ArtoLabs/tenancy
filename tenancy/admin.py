@@ -30,13 +30,15 @@ class TenantAdminSite(AdminSite):
 
     def has_permission(self, request):
         """
-        Allow users with tenantmanager role who belong to the current tenant.
+        Allow users with tenantmanager role who belong to the current tenant,
+        OR tenant admins (who have access to all tenants).
 
         Permission hierarchy:
         1. User must be authenticated and active
-        2. User must have tenantmanager role for the current tenant
+        2. Tenant admins have access to ALL tenant admin sites
+        3. Tenant managers have access to ONLY their assigned tenant's admin site
 
-        CHANGED: Removed is_superuser and is_staff checks, now uses tenancy roles only.
+        CHANGED: Now allows both tenantadmin (all tenants) and tenantmanager (specific tenant).
         """
         import logging
         logger = logging.getLogger(__name__)
@@ -45,7 +47,12 @@ class TenantAdminSite(AdminSite):
             logger.debug(f"User {request.user} denied: not authenticated or not active")
             return False
 
-        # Check if user has tenant manager role
+        # Tenant admins have access to ALL tenant admin sites
+        if roles.is_tenant_admin(request.user):
+            logger.debug(f"Tenant admin {request.user} granted access to tenant admin site")
+            return True
+
+        # For tenant managers, check they have access to THIS specific tenant
         tenant = getattr(request, 'tenant', None)
         if tenant is None:
             logger.warning(f"User {request.user} denied: no tenant in request")

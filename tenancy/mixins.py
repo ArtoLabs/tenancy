@@ -160,27 +160,29 @@ class TenantAdminMixin:
         """
         Check if user has permission to access this module.
 
-        CRITICAL CHANGE: This now ONLY allows tenant managers.
-        Tenant admins should NOT have access to tenant-scoped admin.
+        CRITICAL CHANGE: Tenant admins have access to ALL tenants.
+        Tenant managers only have access to their assigned tenant.
         """
         if not request.user.is_active:
             return False
 
+        # Tenant admins have access to everything
+        if roles.is_tenant_admin(request.user):
+            return True
+
         if not hasattr(request, 'tenant') or request.tenant is None:
             return False
 
-        # ONLY tenant managers can access tenant admin
-        # Tenant admins should use super admin site instead
+        # Tenant managers can only access their assigned tenant
         return roles.is_tenant_manager(request.user, request.tenant)
 
     def has_add_permission(self, request):
         """
         Control add permission.
 
-        CHANGED: Only tenant managers can add (if they have module permission).
-        Tenant admins should NOT be adding via tenant admin site.
+        CHANGED: Tenant admins and tenant managers can both add.
         """
-        # Only allow if user has module permission (i.e., is tenant manager)
+        # Allow if user has module permission
         if not self.has_module_permission(request):
             return False
 
@@ -190,10 +192,9 @@ class TenantAdminMixin:
         """
         Control delete permission.
 
-        CHANGED: Only tenant managers can delete (if they have module permission).
-        Tenant admins should NOT be deleting via tenant admin site.
+        CHANGED: Tenant admins and tenant managers can both delete.
         """
-        # Only allow if user has module permission (i.e., is tenant manager)
+        # Allow if user has module permission
         if not self.has_module_permission(request):
             return False
 
