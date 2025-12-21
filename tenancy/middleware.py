@@ -51,10 +51,14 @@ class TenantMiddleware(MiddlewareMixin):
                 # Tenant admins can access any tenant's /manage/
                 if roles.is_tenant_admin(request.user):
                     logger.info(f"Tenant admin {request.user.username} accessing {tenant.name} /manage/ - allowed")
+                    return None  # Allow through
+
                 # Tenant managers can only access their assigned tenant's /manage/
                 elif roles.is_tenant_manager(request.user, tenant):
                     logger.info(
                         f"Tenant manager {request.user.username} accessing their tenant {tenant.name} /manage/ - allowed")
+                    return None  # Allow through
+
                 # If user has tenant manager role but for a DIFFERENT tenant, return 404
                 elif self._has_any_tenant_manager_role(request.user):
                     logger.warning(
@@ -63,6 +67,16 @@ class TenantMiddleware(MiddlewareMixin):
                     )
                     # Return 404 instead of 403 to avoid revealing tenant existence
                     raise Http404("Page not found")
+
+                # User is authenticated but has no tenant roles at all
+                else:
+                    logger.warning(
+                        f"User {request.user.username} attempted to access {tenant.name} /manage/ "
+                        f"but has no tenant roles - blocking access"
+                    )
+                    # Let the admin site's has_permission handle this (will show login or 403)
+                    # Don't raise 404 here as they might not even be a tenant manager
+                    pass
 
         except Tenant.DoesNotExist:
             logger.error(

@@ -38,7 +38,8 @@ class TenantAdminSite(AdminSite):
         2. Tenant admins have access to ALL tenant admin sites
         3. Tenant managers have access to ONLY their assigned tenant's admin site
 
-        CHANGED: Now allows both tenantadmin (all tenants) and tenantmanager (specific tenant).
+        SECURITY: This is a critical permission check. The middleware should have
+        already blocked unauthorized access, but we verify again here.
         """
         import logging
         logger = logging.getLogger(__name__)
@@ -47,24 +48,30 @@ class TenantAdminSite(AdminSite):
             logger.debug(f"User {request.user} denied: not authenticated or not active")
             return False
 
-        # Tenant admins have access to ALL tenant admin sites
-        if roles.is_tenant_admin(request.user):
-            logger.debug(f"Tenant admin {request.user} granted access to tenant admin site")
-            return True
-
-        # For tenant managers, check they have access to THIS specific tenant
+        # Get the tenant from request (set by middleware based on domain)
         tenant = getattr(request, 'tenant', None)
         if tenant is None:
             logger.warning(f"User {request.user} denied: no tenant in request")
             return False
 
-        # Check if user is a tenant manager for this specific tenant
+        # Tenant admins have access to ALL tenant admin sites
+        if roles.is_tenant_admin(request.user):
+            logger.debug(f"Tenant admin {request.user} granted access to tenant admin site for {tenant}")
+            return True
+
+        # For tenant managers, verify they have role for THIS SPECIFIC tenant
+        # This is the critical check that prevents cross-tenant access
         has_access = roles.is_tenant_manager(request.user, tenant)
 
-        logger.debug(
-            f"User {request.user} - Request tenant: {tenant}, "
-            f"Has tenant manager role: {has_access}"
-        )
+        if not has_access:
+            logger.warning(
+                f"User {request.user} denied access to {tenant} /manage/ - "
+                f"not a tenant manager for this tenant"
+            )
+        else:
+            logger.debug(
+                f"Tenant manager {request.user} granted access to {tenant} /manage/"
+            )
 
         return has_access
 
@@ -107,13 +114,14 @@ class SuperAdminSite(AdminSite):
         """
         Only users with tenantadmin role can access super admin.
 
-        CHANGED: Replaced is_superuser check with tenantadmin role check.
+        CRITICAL: Tenant managers should NEVER access this site.
         """
-        return (
-                request.user.is_authenticated and
-                request.user.is_active and
-                roles.is_tenant_admin(request.user)
-        )
+        if not request.user.is_authenticated or not request.user.is_active:
+            return False
+
+        # ONLY tenant admins can access super admin
+        # Explicitly deny tenant managers
+        return roles.is_tenant_admin(request.user)
 
     def get_urls(self):
         """
