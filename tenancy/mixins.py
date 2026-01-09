@@ -11,8 +11,6 @@ from .roles import roles
 class TenantUserMixin(models.Model):
     """
     Mixin to add tenant field to custom user models.
-
-    REMOVED: is_superadmin field (was redundant with tenancy roles)
     """
     tenant = models.ForeignKey(
         Tenant,
