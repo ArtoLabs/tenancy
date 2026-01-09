@@ -5,14 +5,65 @@ from django.apps import apps
 
 from .models import Tenant
 from .utils import clone_all_template_objects
+from .roles import TenancyRole, roles
+
+from dataclasses import dataclass
 
 User = get_user_model()
 logger = logging.getLogger(__name__)
 
 
+
+@dataclass(frozen=True)
+class TenantAuthzResult:
+    allowed: bool
+    reason: str
+    user: object | None = None
+
+
+def resolve_user_by_email(email: str):
+    User = get_user_model()
+    email_norm = (email or "").strip()
+    if not email_norm:
+        return None
+    return User.objects.filter(email__iexact=email_norm).first()
+
+
+def can_user_authenticate_on_tenant(*, user, tenant) -> TenantAuthzResult:
+    if user is None:
+        return TenantAuthzResult(False, "no_user", None)
+
+    # Global tenant admin can authenticate anywhere
+    if roles.is_tenant_admin(user):
+        return TenantAuthzResult(True, "ok_admin", user)
+
+    # Tenant managers only on their tenant
+    if roles.is_tenant_manager(user, tenant):
+        return TenantAuthzResult(True, "ok_manager", user)
+
+    # Has some tenancy role(s), but not for this tenant
+    if TenancyRole.objects.filter(user=user).exists():
+        return TenantAuthzResult(False, "wrong_tenant", user)
+
+    # No tenancy roles at all (project may or may not want to allow these)
+    return TenantAuthzResult(False, "no_roles", user)
+
+
+def can_identity_authenticate_on_tenant(*, tenant, email: str | None = None, user=None) -> TenantAuthzResult:
+    if user is None and email is not None:
+        user = resolve_user_by_email(email)
+        if user is None:
+            # caller should still respond generically to avoid user enumeration
+            return TenantAuthzResult(False, "unknown_identity", None)
+
+    return can_user_authenticate_on_tenant(user=user, tenant=tenant)
+
+
+
 class TenantProvisioningError(Exception):
     """Raised when tenant provisioning fails."""
     pass
+
 
 
 class TenantProvisioner:

@@ -12,6 +12,42 @@ from .roles import TenancyRole, roles
 logger = logging.getLogger(__name__)
 
 
+
+class RequestTenancyAccess:
+    """
+    Tiny convenience API attached to request as `request.tenancy`.
+    Keeps consuming projects from importing tenancy internals everywhere.
+    """
+    def __init__(self, request):
+        self.request = request
+
+    @property
+    def tenant(self):
+        return getattr(self.request, "tenant", None)
+
+    def can_authenticate_user(self, user):
+        # Reuse your tenancy rules (role-based)
+        if user is None or self.tenant is None:
+            return False
+        if roles.is_tenant_admin(user):
+            return True
+        return roles.is_tenant_manager(user, self.tenant)
+
+    def can_authenticate_email(self, email: str):
+        # Optional: if you’ve implemented can_identity_authenticate_on_tenant()
+        # in tenancy/services_auth.py, you can delegate to it here.
+        from django.contrib.auth import get_user_model
+
+        email_norm = (email or "").strip()
+        if not email_norm or self.tenant is None:
+            return False
+
+        User = get_user_model()
+        user = User.objects.filter(email__iexact=email_norm).first()
+        return self.can_authenticate_user(user)
+
+
+
 class TenantMiddleware(MiddlewareMixin):
     """
     Resolves the tenant based on the hostname and attaches it to the request.
@@ -59,6 +95,8 @@ class TenantMiddleware(MiddlewareMixin):
             tenant = Tenant.objects.get(domain=hostname, is_active=True)
             set_current_tenant(tenant)
             request.tenant = tenant
+            request.tenancy = RequestTenancyAccess(request)
+
             logger.info(f"Tenant '{tenant.name}' (domain: {hostname}) set for request")
 
             # ------------------------------------------------------------------
@@ -266,3 +304,5 @@ class TenantMiddleware(MiddlewareMixin):
         clear_current_tenant()
         logger.exception(f"Exception in request processing: {exception}")
         return None
+
+
