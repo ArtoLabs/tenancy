@@ -16,6 +16,8 @@ from .services import TenantProvisioner, TenantProvisioningError
 from .mixins import TenantAdminMixin, SuperUserAdminMixin
 from .roles import roles, TenancyRole
 
+import uuid
+
 
 class TenantAdminSite(AdminSite):
     """
@@ -140,6 +142,15 @@ class SuperAdminSite(AdminSite):
         CHANGED: Now assigns tenantmanager role to newly created admin user.
         """
         if request.method == 'POST':
+            nonce = request.POST.get("_tenant_create_nonce") or ""
+            expected = request.session.get("_tenant_create_nonce") or ""
+            if not expected or nonce != expected:
+                messages.error(request, "This form was already submitted (or is stale). Reload and try again.")
+                return redirect(request.path)
+
+            # consume nonce (one-time)
+            request.session.pop("_tenant_create_nonce", None)
+
             form = TenantCreationForm(request.POST)
             if form.is_valid():
                 tenant_data = {
@@ -177,12 +188,14 @@ class SuperAdminSite(AdminSite):
                     )
                     return redirect('admin:index')
         else:
+            request.session["_tenant_create_nonce"] = uuid.uuid4().hex
             form = TenantCreationForm()
 
         context = {
             **self.each_context(request),
             'title': 'Create Tenant',
             'form': form,
+            'tenant_create_nonce': request.session.get("_tenant_create_nonce", ""),
         }
         return render(request, 'admin/tenancy/create_tenant.html', context)
 

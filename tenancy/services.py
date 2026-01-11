@@ -1,7 +1,7 @@
 import logging
 from django.contrib.auth import get_user_model
-from django.db import transaction
 from django.apps import apps
+from django.db import IntegrityError, transaction
 
 from .models import Tenant
 from .utils import clone_all_template_objects
@@ -130,7 +130,11 @@ class TenantProvisioner:
                 )
 
             return tenant, user #, clone_map
-
+        except IntegrityError as e:
+            # domain uniqueness collision
+            raise TenantProvisioningError(
+                f"A tenant with domain '{tenant_data.get('domain')}' already exists."
+            ) from e
         except Exception as e:
             logger.error(f"Failed to create tenant: {e}", exc_info=True)
             raise TenantProvisioningError(

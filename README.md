@@ -1,15 +1,16 @@
 # Django Multi-Tenancy Package
 
-A comprehensive Django package for building multi-tenant applications with complete data isolation, intelligent object cloning, and dual admin interfaces.
+A comprehensive Django package for building multi-tenant applications with complete data isolation, role-based permissions, intelligent object cloning, and dual admin interfaces.
 
 ## Features
 
 - 🏢 **Complete Tenant Isolation** - Every tenant's data is completely separate
-- 🔐 **Dual Admin Interfaces** - Separate admin sites for system admins and tenant managers
+- 🔐 **Role-Based Access Control** - Independent permission system with `tenantadmin` and `tenantmanager` roles
+- 🛡️ **Dual Admin Interfaces** - Separate admin sites for system admins and tenant managers
 - 🎨 **Intelligent Object Cloning** - Three cloning modes (full, skeleton, field overrides) with automatic foreign key resolution
 - 🔄 **Automatic Tenant Provisioning** - Clone template objects when creating new tenants
-- 🛡️ **Permission System** - Tenant managers can view/edit but not create/delete
 - 🎯 **Domain-Based Routing** - Automatic tenant detection from hostname
+- 🔒 **Tenant-Safe Authentication** - Prevents tenant managers from authenticating on the wrong tenant domain
 - 🧩 **Plug-and-Play** - Minimal configuration required
 
 ---
@@ -20,9 +21,9 @@ A comprehensive Django package for building multi-tenant applications with compl
 - [Quick Start](#quick-start)
 - [Configuration](#configuration)
 - [Core Concepts](#core-concepts)
+- [Role-Based Permissions](#role-based-permissions)
 - [Cloning System](#cloning-system)
 - [Admin Interfaces](#admin-interfaces)
-- [Permission Model](#permission-model)
 - [Advanced Usage](#advanced-usage)
 - [Troubleshooting](#troubleshooting)
 - [Best Practices](#best-practices)
@@ -76,7 +77,19 @@ MIDDLEWARE = [
 ]
 ```
 
-### 3. Create Custom User Model
+### 3. Add Authentication Backend (Recommended)
+
+The tenancy package provides a tenant-aware authentication backend that prevents users from authenticating on the wrong tenant domain when using Django’s authenticate() pipeline (including username/password login and Django admin login).
+
+```python
+# settings.py
+AUTHENTICATION_BACKENDS = [
+    'tenancy.backends.TenantGuardModelBackend',  # Recommended: tenant-safe authentication
+    # The rest of your backends
+]
+```
+
+### 4. Create Custom User Model
 
 ```python
 # myapp/models.py
@@ -93,7 +106,7 @@ class User(TenantUserMixin, AbstractUser):
 AUTH_USER_MODEL = 'myapp.User'
 ```
 
-### 4. Add Tenant-Aware Models
+### 5. Add Tenant-Aware Models
 
 ```python
 # myapp/models.py
@@ -108,7 +121,7 @@ class Product(TenantMixin):
         return self.name
 ```
 
-### 5. Configure URLs
+### 6. Configure URLs
 
 ```python
 # urls.py
@@ -122,7 +135,7 @@ urlpatterns = [
 ]
 ```
 
-### 6. Register Models in Admin
+### 7. Register Models in Admin
 
 ```python
 # myapp/admin.py
@@ -144,25 +157,55 @@ class ProductSuperAdmin(SuperUserAdminMixin, admin.ModelAdmin):
     search_fields = ['name']
 ```
 
-### 7. Run Migrations
+### 8. Run Migrations
 
 ```bash
 python manage.py makemigrations
 python manage.py migrate
 ```
 
-### 8. Create Superuser and First Tenant
+### 9. Bootstrap Your First Tenant
+
+Use the bootstrap command to create your first tenant and initial users:
 
 ```bash
-# Create superuser
-python manage.py createsuperuser
-
-# Start development server
-python manage.py runserver
-
-# Navigate to http://localhost:8000/admin
-# Login and create your first tenant (the "template tenant")
+python manage.py bootstrap_first_tenant
 ```
+
+This interactive command will:
+1. Create your first tenant (the "template tenant")
+2. Create a tenant manager user for that tenant
+3. Optionally create a system admin user with `tenantadmin` role
+
+**Example session:**
+```
+Enter tenant name: Acme Corporation
+Enter tenant domain (e.g. tenant1.localhost): acme.localhost
+Enter tenant manager username: manager@acme.com
+Enter tenant manager email: manager@acme.com
+Enter tenant manager password: ••••••••
+Create a system admin now? (y/n): y
+Enter system admin username: admin
+Enter system admin email: admin@example.com
+Enter system admin password: ••••••••
+
+✓ Created tenant "Acme Corporation" with domain "acme.localhost"
+✓ Created tenant manager user "manager@acme.com"
+✓ Assigned tenantmanager role for tenant "Acme Corporation"
+✓ Created system admin user "admin"
+✓ Assigned tenantadmin role (system-wide access)
+```
+
+**What gets created:**
+- **Tenant**: Your first tenant with the specified domain
+- **Tenant Manager**: User with `tenantmanager` role for this tenant (can access `/manage`)
+- **System Admin** (optional): User with `tenantadmin` role (can access `/admin` and all `/manage` sites)
+
+**Next steps:**
+1. Add `127.0.0.1 acme.localhost` to `/etc/hosts`
+2. Start server: `python manage.py runserver`
+3. System admin login: `http://localhost:8000/admin/`
+4. Tenant manager login: `http://acme.localhost:8000/manage/`
 
 ---
 
@@ -175,6 +218,33 @@ python manage.py runserver
 
 # Required: Custom user model with TenantUserMixin
 AUTH_USER_MODEL = 'myapp.User'
+
+# Recommended: tenant-safe authentication (prevents cross-tenant authentication)
+AUTHENTICATION_BACKENDS = [
+    'tenancy.backends.TenantGuardModelBackend',
+    'django.contrib.auth.backends.ModelBackend',
+]
+
+# Optional: Bootstrap mode (allows /admin access without tenant resolution)
+TENANCY_BOOTSTRAP = False  # Set to True only during initial setup
+
+# Recommended: Enforce tenant membership for authenticated users (middleware-level safety net)
+TENANCY_ENFORCE_MEMBERSHIP = True
+
+# Optional: Skip membership enforcement for certain paths (useful for custom auth endpoints)
+TENANCY_MEMBERSHIP_EXEMPT_PATHS = [
+    '/accounts/',  # typical magic-link/OTP endpoints
+    '/auth/',
+    '/login/',
+    '/logout/',
+    '/static/',
+    '/media/',
+    '/favicon.ico',
+    '/health/',
+]
+
+# Optional: If request.tenant is missing during auth, deny by default
+TENANCY_DENY_AUTH_WITHOUT_TENANT = True
 
 # Recommended: Logging configuration for debugging
 LOGGING = {
@@ -192,6 +262,7 @@ LOGGING = {
         },
     },
 }
+
 ```
 
 ### Development Setup with Multiple Domains
@@ -272,17 +343,167 @@ class User(TenantUserMixin, AbstractUser):
 
 This adds:
 - `tenant` foreign key with `PROTECT` on delete
-- Allows superusers without a tenant
+- Allows users without a tenant assignment
 - Enables tenant-based user filtering
 
 ### The Template Tenant
 
-The **first tenant** created (usually ID=1) serves as the **template tenant**:
+The **first tenant** created serves as the **template tenant**:
 - Contains "template objects" that define the default configuration
 - When a new tenant is created, template objects are cloned
-- Only superusers can modify template objects
+- Only users with `tenantadmin` role can modify template objects
 
 **Best Practice**: Create your first tenant with domain `template.localhost` and use it exclusively for defining default configurations.
+
+---
+
+## Role-Based Permissions
+
+The tenancy package uses a **self-contained role system** that is completely independent of Django's `is_superuser` and `is_staff` flags.
+
+### The Two Roles
+
+#### Tenant Admin (`tenantadmin`)
+
+**Purpose**: System-wide administration
+
+**Access**:
+- ✅ Can access `/admin/` (super admin site)
+- ✅ Can access ALL `/manage/` sites for ALL tenants (god mode)
+- ✅ Can create new tenants
+- ✅ Can view and manage all tenant data
+- ✅ Can assign roles to users
+
+**Use case**: The system owner or IT administrator who oversees the entire multi-tenant system. Typically only 1-2 people have this role.
+
+#### Tenant Manager (`tenantmanager`)
+
+**Purpose**: Tenant-specific administration
+
+**Access**:
+- ❌ Cannot access `/admin/` (403 Forbidden)
+- ✅ Can access `/manage/` for their assigned tenant only
+- ❌ Cannot access other tenants' `/manage/` sites (404 Not Found)
+- ❌ Cannot create new tenants
+- ✅ Can manage users and data within their tenant
+- ❌ Cannot see Tenant or TenancyRole models
+
+**Use case**: The manager or admin of a specific tenant organization. Each tenant has one or more tenant managers.
+
+### The TenancyRole Model
+
+Roles are stored in the `TenancyRole` model with these fields:
+- **user**: The user being granted the role
+- **role**: Either `'tenantadmin'` or `'tenantmanager'`
+- **tenant**: The specific tenant (required for `tenantmanager`, must be `None` for `tenantadmin`)
+- **assigned_at**: When the role was granted
+- **assigned_by**: Who granted the role (audit trail)
+
+### Managing Roles
+
+#### Via Python Shell
+
+```python
+from django.contrib.auth import get_user_model
+from tenancy.models import Tenant
+from tenancy.roles import roles, TenancyRole
+
+User = get_user_model()
+
+# Assign tenant admin role (system-wide access)
+admin_user = User.objects.get(username='admin')
+roles.assign_role(
+    user=admin_user,
+    role=TenancyRole.TENANT_ADMIN,
+    tenant=None,  # System-wide, not tied to specific tenant
+    assigned_by=None  # Or pass the user who is assigning
+)
+
+# Assign tenant manager role (tenant-specific access)
+manager_user = User.objects.get(username='manager')
+tenant = Tenant.objects.get(domain='acme.localhost')
+roles.assign_role(
+    user=manager_user,
+    role=TenancyRole.TENANT_MANAGER,
+    tenant=tenant,  # Specific tenant only
+    assigned_by=admin_user
+)
+
+# Check roles
+is_admin = roles.is_tenant_admin(admin_user)  # True
+is_manager = roles.is_tenant_manager(manager_user, tenant)  # True
+
+# Get all tenants a user can manage
+managed_tenants = roles.get_managed_tenants(manager_user)
+
+# Revoke a role
+roles.revoke_role(manager_user, TenancyRole.TENANT_MANAGER, tenant)
+```
+
+#### Via Admin Interface
+
+System admins can manage roles via the super admin interface:
+
+1. Login to `/admin/` as a tenant admin
+2. Go to "Tenancy Roles"
+3. Click "Add Tenancy Role"
+4. Select:
+   - **User**: The user to grant the role to
+   - **Role**: Either `tenantadmin` or `tenantmanager`
+   - **Tenant**: Leave blank for `tenantadmin`, select tenant for `tenantmanager`
+
+#### During Tenant Creation
+
+When creating a tenant via the super admin interface, the initial admin user is automatically assigned the `tenantmanager` role for that tenant.
+
+### Debugging Permissions
+
+Use the diagnostic command to check a user's permissions:
+
+```bash
+python manage.py debug_tenancy_permissions <username>
+```
+
+**Example output:**
+```
+Tenancy Roles:
+  ✓ Tenant Manager - Can manage tenant-specific content
+    Tenant: Acme Corporation (acme.localhost)
+    Assigned: 2025-01-09 14:32:46
+
+Tenant Admin Status:
+  ✗ User is NOT a tenant admin
+
+Tenant Manager Status:
+  ✓ User is tenant manager for 1 tenant(s):
+    - Acme Corporation (acme.localhost)
+
+Access Check by Tenant:
+  ✓ Acme Corporation (acme.localhost)
+    Access: YES (as tenant manager)
+  ✗ Demo Corp (demo.localhost)
+    Access: NO
+    Expected: 404 Not Found
+```
+
+### Migration from Django Auth
+
+If you're upgrading from a version that used Django's `is_superuser` and `is_staff`, use the migration command:
+
+```bash
+# First, do a dry run to see what will happen
+python manage.py migrate_tenancy_permissions --dry-run
+
+# If everything looks good, run the actual migration
+python manage.py migrate_tenancy_permissions
+```
+
+This will:
+- Convert all `is_superuser=True` users → `tenantadmin` role
+- Convert all `is_staff=True` users with a tenant → `tenantmanager` role for their tenant
+- Flag any staff users without a tenant for manual review
+
+**Note**: After migration, the `is_superuser` and `is_staff` flags are no longer used for tenancy permissions and can be used for other purposes in your application.
 
 ---
 
@@ -411,15 +632,15 @@ This pattern allows you to:
 
 ## Admin Interfaces
 
-The package provides **two separate admin sites** with different purposes:
+The package provides **two separate admin sites** with different purposes and access controls:
 
 ### Super Admin (`/admin`)
 
-**Purpose**: System-wide management for superusers
+**Purpose**: System-wide management for tenant admins
 
 **Access**: `http://yourdomain.com/admin`
 
-**Who can access**: Only superusers
+**Who can access**: Only users with `tenantadmin` role
 
 **Features**:
 - Manage all tenants
@@ -427,7 +648,8 @@ The package provides **two separate admin sites** with different purposes:
 - View/edit objects across ALL tenants
 - Shows `tenant_display` column in list views
 - Can create and delete objects
-- Manage system users
+- Manage tenancy roles
+- Manage all system users
 
 **Registering models**:
 
@@ -443,18 +665,20 @@ class MyModelSuperAdmin(SuperUserAdminMixin, admin.ModelAdmin):
 
 ### Tenant Admin (`/manage`)
 
-**Purpose**: Tenant-specific management for tenant staff
+**Purpose**: Tenant-specific management for tenant managers
 
 **Access**: `http://tenant-domain.com/manage`
 
-**Who can access**: Staff users belonging to the current tenant
+**Who can access**: 
+- Users with `tenantmanager` role for the current tenant
+- Users with `tenantadmin` role (god mode - can access all tenants)
 
 **Features**:
 - View/edit ONLY current tenant's objects
-- Cannot create new objects (provisioned at tenant creation)
-- Cannot delete objects (prevents breaking configuration)
+- Can create and manage objects within tenant
 - Tenant field is hidden (auto-assigned)
 - Foreign key dropdowns show only tenant's objects
+- Cannot see Tenant or TenancyRole models
 
 **Registering models**:
 
@@ -476,60 +700,54 @@ class MyModelTenantAdmin(TenantAdminMixin, admin.ModelAdmin):
    - **Tenant Name**: "Acme Corporation"
    - **Domain**: "acme.localhost"
    - **Active**: ✓
-   - **Admin Username**: "admin@acme.com"
-   - **Admin Email**: "admin@acme.com"
+   - **Admin Username**: "manager@acme.com"
+   - **Admin Email**: "manager@acme.com"
    - **Admin Password**: (secure password)
 4. Click **"Create Tenant"**
 
 **What happens automatically**:
 - Tenant record is created
-- Admin user is created for the tenant
+- Admin user is created and assigned the `tenantmanager` role for this tenant
 - ALL template objects are discovered
 - Objects are cloned in topological order (respecting dependencies)
 - Each model's cloning mode is respected
 - Foreign keys are resolved to newly cloned instances
 
-**Result**: The new tenant is fully provisioned and the admin user can login at `http://acme.localhost:8000/manage`
-
----
-
-## Permission Model
-
-### Tenant Manager Permissions
-
-Tenant managers (staff users belonging to a tenant) can:
-
-✅ **VIEW** objects belonging to their tenant
-✅ **EDIT** objects belonging to their tenant
-
-❌ **CREATE** new objects (objects are provisioned during tenant creation)
-❌ **DELETE** objects (prevents breaking configuration)
-❌ **ACCESS** other tenants' objects
-
-### Why Restrict Create/Delete?
-
-**Design Philosophy**:
-1. Template objects are carefully designed by system admins
-2. Objects are cloned during tenant provisioning to ensure consistency
-3. Manual creation could bypass proper cloning and break foreign key relationships
-4. Manual deletion could break dependencies between related objects
-5. If a tenant needs configuration reset, superuser re-runs provisioning
-
-**Allowing Edit**:
-- Tenant managers can customize cloned objects (colors, text, settings)
-- This provides flexibility without risking data integrity
-
-### Superuser Override
-
-Superusers bypass ALL restrictions:
-- Can access both `/admin` and `/manage`
-- Can create and delete objects
-- Can view all tenants' objects
-- Useful for debugging and support
+**Result**: The new tenant is fully provisioned and the manager user can login at `http://acme.localhost:8000/manage`
 
 ---
 
 ## Advanced Usage
+
+### Tenant-Safe Login for Custom Authentication Flows
+
+If your authentication flow bypasses authenticate() and calls login(request, user) directly, use the tenancy helper:
+
+```python
+from tenancy.auth import tenancy_login
+
+if not tenancy_login(request, user):
+    return redirect("accounts:login")
+```
+
+### Request Convenience Helper (request.tenancy)
+
+The middleware attaches a helper object to each request after tenant resolution.
+
+Available helpers:
+
+- request.tenant
+- request.tenancy.can_authenticate_user(user) -> bool
+- request.tenancy.can_authenticate_email(email) -> bool
+
+Example usage:
+
+```python
+email = request.POST.get("email", "").strip()
+
+if not request.tenancy.can_authenticate_email(email):
+    return render(request, "accounts/check_your_email.html")
+```
 
 ### Customizing Admin Site Classes
 
@@ -582,33 +800,38 @@ class MFAMixin:
     """
     Mixin to add MFA enforcement to admin sites.
     
-    This mixin:
-    - Checks if user has registered MFA devices
-    - Verifies MFA token before granting admin access
-    - Redirects to MFA setup/verify views as needed
+    CRITICAL: This mixin must call super().has_permission() to preserve
+    the tenancy role checking from TenantAdminSite and SuperAdminSite.
     """
     
     def has_permission(self, request):
         """
-        Enforce MFA in addition to standard admin permissions.
+        Enforce MFA in addition to tenancy role checks.
         
         Permission flow:
-        1. Check standard permissions (active, staff, tenant match)
+        1. Check tenancy roles (via super() - checks tenantadmin or tenantmanager)
         2. Verify user has at least one MFA device registered
         3. Check that MFA has been verified this session
         """
-        # First check the parent admin site's permissions
+        user = request.user
+        
+        # CRITICAL: Check tenancy roles FIRST
+        # This calls either SuperAdminSite.has_permission() or TenantAdminSite.has_permission()
         if not super().has_permission(request):
             return False
         
-        user = request.user
+        # User has correct tenancy role, now check MFA requirements
         
-        # Check if user has registered MFA devices
+        # Active check (redundant but safe to keep)
+        if not getattr(user, "is_active", False):
+            return False
+        
+        # Check registered MFA devices
         user_devices = list(devices_for_user(user))
         if not user_devices:
             return False
         
-        # Check if MFA verification is still required this session
+        # If session says MFA required, deny permission (forces verify step)
         if request.session.get("mfa_required", False):
             return False
         
@@ -618,55 +841,87 @@ class MFAMixin:
         """
         Override login flow to enforce MFA.
         
+        CRITICAL: This method handles authentication and MFA, then redirects.
+        It does NOT check authorization - that's handled by has_permission().
+        
         Login flow:
         1. If not authenticated → redirect to login
         2. If no MFA devices → redirect to setup
         3. If MFA not verified → redirect to verify
-        4. If all good → redirect to admin index
+        4. If all good → redirect to original URL (authorization checked there)
         """
+        # Get the original URL the user was trying to access
+        next_url = request.GET.get('next', request.POST.get('next', None))
+        
         # If not authenticated, redirect to your login view
         if not request.user.is_authenticated:
             return redirect("accounts:login")
         
-        # Authenticated but not staff - deny access
-        if not (request.user.is_active and request.user.is_staff):
+        # Authenticated but not active - deny access
+        if not getattr(request.user, "is_active", False):
             return redirect("accounts:profile")
         
         # Check if user has MFA devices
         if not list(devices_for_user(request.user)):
             # Redirect to MFA setup
+            if next_url:
+                request.session['mfa_setup_next'] = next_url
             return redirect("accounts:mfa_setup")
         
         # Check if MFA verification is needed
         if request.session.get("mfa_required", False):
             # Redirect to MFA verification
+            if next_url:
+                request.session['mfa_verify_next'] = next_url
             return redirect("accounts:mfa_verify")
         
-        # All checks passed - redirect to admin index
-        return redirect(self.index(request))
+        # User is authenticated AND MFA is verified
+        # Redirect to the original URL (or admin index if no next parameter)
+        if next_url:
+            return redirect(next_url)
+        else:
+            # No next parameter - redirect to this admin site's index
+            return redirect(f'{self.name}:index')
 
 
 class MFATenantAdminSite(MFAMixin, TenantAdminSite):
     """
-    Tenant admin site with MFA enforcement.
+    Tenant admin with MFA enforcement.
     
-    Combines:
-    - Tenant isolation from TenantAdminSite
-    - MFA enforcement from MFAMixin
+    Permission hierarchy:
+    1. MFAMixin.has_permission() checks tenancy roles via super()
+       └─> TenantAdminSite.has_permission() checks tenantmanager/tenantadmin role
+    2. Then checks MFA requirements
+    
+    Login flow:
+    1. MFAMixin.login() handles authentication and MFA
+    2. Redirects back to original URL
+    3. has_permission() checks authorization
     """
     pass
 
 
 class MFASuperAdminSite(MFAMixin, SuperAdminSite):
     """
-    Super admin site with MFA enforcement.
+    Super admin with MFA enforcement.
     
-    Combines:
-    - Cross-tenant access from SuperAdminSite
-    - MFA enforcement from MFAMixin
+    Permission hierarchy:
+    1. MFAMixin.has_permission() checks tenancy roles via super()
+       └─> SuperAdminSite.has_permission() checks tenantadmin role
+    2. Then checks MFA requirements
+    
+    Login flow:
+    1. MFAMixin.login() handles authentication and MFA
+    2. Redirects back to original URL
+    3. has_permission() checks authorization
     """
     pass
 ```
+
+**Critical Points**:
+1. **`has_permission()` must call `super()`** - This preserves tenancy role checking
+2. **`login()` should redirect, not render** - Return `redirect(next_url)`, not `redirect(self.index(request))`
+3. **Separate authentication from authorization** - `login()` handles auth/MFA, `has_permission()` handles tenancy roles
 
 **Why a separate file?** This prevents circular imports. The tenancy package imports your classes during initialization, so they can't be in the same file that imports from the tenancy package.
 
@@ -713,7 +968,9 @@ def mfa_setup(request):
             name='default',
             confirmed=True
         )
-        return redirect('accounts:mfa_verify')
+        # Get the next URL from session
+        next_url = request.session.pop('mfa_setup_next', '/admin/')
+        return redirect(next_url)
     
     return render(request, 'accounts/mfa_setup.html')
 
@@ -726,8 +983,9 @@ def mfa_verify(request):
         if device:
             # Mark MFA as verified for this session
             request.session['mfa_required'] = False
-            # Redirect back to admin
-            return redirect(request.GET.get('next', '/admin/'))
+            # Redirect back to original URL
+            next_url = request.session.pop('mfa_verify_next', '/admin/')
+            return redirect(next_url)
         else:
             # Token invalid
             return render(request, 'accounts/mfa_verify.html', {
@@ -771,160 +1029,48 @@ urlpatterns = [
 ]
 ```
 
-**Result**: Both admin sites now require MFA authentication before granting access, while preserving all tenant isolation and multi-tenant features.
+**Result**: Both admin sites now require:
+1. ✅ Correct tenancy role (`tenantadmin` or `tenantmanager`)
+2. ✅ MFA setup and verification
+3. ✅ Complete isolation between tenants
 
-#### Example: Passwordless Authentication
+#### Common Mistakes When Customizing
 
-You can also customize the login flow for passwordless authentication:
-
+❌ **Not calling `super().has_permission()`**
 ```python
-# accounts/admin_sites.py
-from django.shortcuts import redirect
-from tenancy.admin import TenantAdminSite, SuperAdminSite
-from .models import LoginLink
-
-
-class PasswordlessMixin:
-    """Mixin for magic link authentication."""
-    
-    def login(self, request, extra_context=None):
-        """Redirect to magic link request instead of password form."""
-        if not request.user.is_authenticated:
-            return redirect("accounts:request_login_link")
-        
-        if not (request.user.is_active and request.user.is_staff):
-            return redirect("accounts:no_permission")
-        
-        return redirect(self.index(request))
-
-
-class PasswordlessTenantAdminSite(PasswordlessMixin, TenantAdminSite):
-    pass
-
-
-class PasswordlessSuperAdminSite(PasswordlessMixin, SuperAdminSite):
-    pass
+def has_permission(self, request):
+    # WRONG - bypasses tenancy role checks!
+    if not request.user.is_staff:
+        return False
+    # ... MFA checks ...
+    return True
 ```
 
-Then configure:
-
+✅ **Correct - calls super() first**
 ```python
-# settings.py
-TENANCY_TENANT_ADMIN_SITE_CLASS = 'accounts.admin_sites.PasswordlessTenantAdminSite'
-TENANCY_SUPER_ADMIN_SITE_CLASS = 'accounts.admin_sites.PasswordlessSuperAdminSite'
+def has_permission(self, request):
+    # Check tenancy roles first
+    if not super().has_permission(request):
+        return False
+    # Then check MFA
+    # ... MFA checks ...
+    return True
 ```
 
-#### Example: IP Allowlist
-
-Restrict admin access to specific IP addresses:
-
+❌ **Rendering instead of redirecting in login()**
 ```python
-# accounts/admin_sites.py
-from django.http import HttpResponseForbidden
-from django.conf import settings
-from tenancy.admin import TenantAdminSite, SuperAdminSite
-
-
-class IPAllowlistMixin:
-    """Restrict admin access to allowed IP addresses."""
-    
-    def has_permission(self, request):
-        if not super().has_permission(request):
-            return False
-        
-        # Get client IP
-        ip = self.get_client_ip(request)
-        
-        # Check against allowlist
-        allowed_ips = getattr(settings, 'ADMIN_ALLOWED_IPS', [])
-        if allowed_ips and ip not in allowed_ips:
-            return False
-        
-        return True
-    
-    def get_client_ip(self, request):
-        """Get client IP from request."""
-        x_forwarded_for = request.META.get('HTTP_X_FORWARDED_FOR')
-        if x_forwarded_for:
-            ip = x_forwarded_for.split(',')[0]
-        else:
-            ip = request.META.get('REMOTE_ADDR')
-        return ip
-
-
-class IPRestrictedTenantAdminSite(IPAllowlistMixin, TenantAdminSite):
-    pass
-
-
-class IPRestrictedSuperAdminSite(IPAllowlistMixin, SuperAdminSite):
-    pass
+def login(self, request, extra_context=None):
+    # WRONG - tries to render index directly!
+    return redirect(self.index(request))
 ```
 
-#### Combining Multiple Customizations
-
-You can combine multiple customizations using multiple inheritance:
-
+✅ **Correct - redirects to URL**
 ```python
-# accounts/admin_sites.py
-from tenancy.admin import TenantAdminSite, SuperAdminSite
-
-
-class MFAMixin:
-    """MFA enforcement."""
-    # ... MFA logic ...
-
-
-class IPAllowlistMixin:
-    """IP restriction."""
-    # ... IP check logic ...
-
-
-class AuditLogMixin:
-    """Audit logging."""
-    def has_permission(self, request):
-        result = super().has_permission(request)
-        # Log the access attempt
-        logger.info(f"Admin access: {request.user} from {request.META['REMOTE_ADDR']}")
-        return result
-
-
-# Combine all three!
-class SecureTenantAdminSite(AuditLogMixin, IPAllowlistMixin, MFAMixin, TenantAdminSite):
-    """Tenant admin with MFA, IP restriction, and audit logging."""
-    pass
-
-
-class SecureSuperAdminSite(AuditLogMixin, IPAllowlistMixin, MFAMixin, SuperAdminSite):
-    """Super admin with MFA, IP restriction, and audit logging."""
-    pass
+def login(self, request, extra_context=None):
+    # Redirect to URL (authorization checked there)
+    next_url = request.GET.get('next', '/admin/')
+    return redirect(next_url)
 ```
-
-**MRO (Method Resolution Order)**: Python calls methods from left to right, so mixins are checked before the base admin site class.
-
-#### Troubleshooting Custom Admin Sites
-
-**Circular Import Error**
-
-```
-ImportError: Module "accounts.admin" does not define a "MFATenantAdminSite" attribute/class
-```
-
-**Solution**: Move your custom admin site classes to a separate file (e.g., `admin_sites.py`) that doesn't import from `tenancy.admin`. Your `admin.py` can import from tenancy, but your `admin_sites.py` should only import the base classes.
-
-**Settings Not Being Applied**
-
-If your custom classes aren't being used, check:
-1. Settings path is correct: `'app_name.module_name.ClassName'`
-2. Settings are loaded before Django initialization
-3. No typos in setting names
-4. Module is importable: `python -c "from accounts.admin_sites import MFATenantAdminSite"`
-
-**Models Not Registered**
-
-If the `Tenant` model or `User` model isn't showing up:
-1. Verify your custom classes inherit from `TenantAdminSite` and `SuperAdminSite`
-2. Check that the tenancy package loaded successfully: `python manage.py check`
-3. Look for errors in startup logs
 
 ### Custom Cloning Logic
 
@@ -986,6 +1132,7 @@ Create tenants programmatically in your code:
 
 ```python
 from tenancy.services import TenantProvisioner, TenantProvisioningError
+from tenancy.roles import roles, TenancyRole
 
 try:
     tenant, user, clone_map = TenantProvisioner.create_tenant(
@@ -1000,6 +1147,10 @@ try:
             'password': 'secure_password_123'
         }
     )
+    
+    # The user is automatically assigned tenantmanager role
+    # But you can assign additional roles:
+    roles.assign_role(user, TenancyRole.TENANT_ADMIN, None)
     
     # Access cloned objects
     from myapp.models import Theme
@@ -1100,15 +1251,74 @@ tenant.deactivate()
    my_model.save()
    ```
 
-### Tenant Manager Can't Login
+### User Can't Access Admin
 
-**Problem**: Tenant manager sees "You don't have permission" when accessing `/manage`.
+**Problem**: User sees "You don't have permission" when accessing admin.
 
 **Solutions**:
-1. Verify user has `is_staff=True`
-2. Verify user's `tenant` matches the request's tenant
-3. Check user is accessing via their tenant's domain
-4. Verify middleware is working (check logs)
+1. **For `/admin` access**: User must have `tenantadmin` role
+   ```python
+   roles.assign_role(user, TenancyRole.TENANT_ADMIN, None)
+   ```
+
+2. **For `/manage` access**: User must have `tenantmanager` role for that tenant
+   ```python
+   tenant = Tenant.objects.get(domain='acme.localhost')
+   roles.assign_role(user, TenancyRole.TENANT_MANAGER, tenant)
+   ```
+
+3. Verify user is active: `user.is_active = True`
+
+4. Check roles with diagnostic command:
+   ```bash
+   python manage.py debug_tenancy_permissions username
+   ```
+
+### Tenant Manager Can Access Wrong Tenant
+
+**Problem**: Manager of Tenant A can access Tenant B's `/manage`.
+
+**Solutions**:
+1. Check role assignments:
+   ```bash
+   python manage.py debug_tenancy_permissions username
+   ```
+
+2. Verify they don't have multiple `tenantmanager` roles:
+   ```python
+   from tenancy.roles import TenancyRole
+   roles = TenancyRole.objects.filter(user=user, role='tenantmanager')
+   print(roles)  # Should only show one tenant
+   ```
+
+3. Revoke incorrect roles:
+   ```python
+   from tenancy.roles import roles
+   roles.revoke_role(user, TenancyRole.TENANT_MANAGER, wrong_tenant)
+   ```
+
+### Tenant Manager Can Access /admin/
+
+**Problem**: Tenant manager can access super admin site.
+
+**Solutions**:
+1. Check if they have `tenantadmin` role:
+   ```bash
+   python manage.py debug_tenancy_permissions username
+   ```
+
+2. Revoke `tenantadmin` role if present:
+   ```python
+   roles.revoke_role(user, TenancyRole.TENANT_ADMIN, None)
+   ```
+
+3. If using custom admin site classes, verify `has_permission()` calls `super()`:
+   ```python
+   def has_permission(self, request):
+       if not super().has_permission(request):  # Must call super!
+           return False
+       # Your custom checks...
+   ```
 
 ### Objects Not Cloning
 
@@ -1130,20 +1340,37 @@ tenant.deactivate()
 3. Check that related model is included in cloning (not excluded)
 4. Review topological sort order in logs
 
-### "list object has no attribute ForeignKey"
-
-**Problem**: Error during topological sorting.
-
-**Solutions**:
-1. Update to latest version (this was a bug that's been fixed)
-2. Check for unusual field definitions on your models
-3. Verify all models using `TenantMixin` are concrete (not abstract)
-
 ---
 
 ## Best Practices
 
-### 1. Template Tenant Setup
+### 1. Role Management
+
+**Principle of Least Privilege**:
+- Assign `tenantadmin` role sparingly (typically 1-2 people)
+- Most users should have `tenantmanager` role for specific tenants
+- Don't grant `tenantadmin` unless user needs cross-tenant access
+
+**Audit Trail**:
+- Always pass `assigned_by` when assigning roles programmatically
+- Regularly review role assignments via admin interface
+- Use the diagnostic command to verify permissions
+
+**Role Assignment Pattern**:
+```python
+# Good - specific and auditable
+roles.assign_role(
+    user=manager,
+    role=TenancyRole.TENANT_MANAGER,
+    tenant=tenant,
+    assigned_by=request.user
+)
+
+# Bad - too permissive
+roles.assign_role(user=manager, role=TenancyRole.TENANT_ADMIN, tenant=None)
+```
+
+### 2. Template Tenant Setup
 
 Create a dedicated template tenant:
 
@@ -1158,9 +1385,9 @@ template = Tenant.objects.create(
 
 - Use this ONLY for defining defaults
 - Don't use it as a real tenant
-- Superusers should carefully curate template objects
+- Only users with `tenantadmin` role should modify it
 
-### 2. Model Design
+### 3. Model Design
 
 **Always provide `__str__` methods that handle None**:
 
@@ -1179,7 +1406,7 @@ This prevents issues when skeleton cloning sets fields to empty string.
 - **Skeleton clone**: For tenant-specific configs (site settings, branding)
 - **Field overrides**: For partial cloning with specific nullifications
 
-### 3. Foreign Keys
+### 4. Foreign Keys
 
 **Make FKs nullable when using skeleton mode**:
 
@@ -1191,7 +1418,7 @@ class SiteConfig(TenantMixin):
     CLONE_MODE = 'skeleton'
 ```
 
-### 4. Admin Registration
+### 5. Admin Registration
 
 **Always register on both admin sites**:
 
@@ -1207,17 +1434,30 @@ class MyModelTenantAdmin(TenantAdminMixin, admin.ModelAdmin):
     pass
 ```
 
-### 5. Testing
+### 6. Testing
 
-**Test with multiple tenants**:
+**Test with multiple tenants and roles**:
 
 ```python
 from tenancy.models import Tenant
+from tenancy.roles import roles, TenancyRole
+from django.contrib.auth import get_user_model
+
+User = get_user_model()
 
 def test_tenant_isolation():
+    # Create tenants
     tenant1 = Tenant.objects.create(name='T1', domain='t1.test')
     tenant2 = Tenant.objects.create(name='T2', domain='t2.test')
     
+    # Create users with roles
+    admin = User.objects.create_user(username='admin', password='pass')
+    roles.assign_role(admin, TenancyRole.TENANT_ADMIN, None)
+    
+    manager1 = User.objects.create_user(username='mgr1', password='pass')
+    roles.assign_role(manager1, TenancyRole.TENANT_MANAGER, tenant1)
+    
+    # Test isolation
     tenant1.activate()
     obj1 = MyModel.objects.create(name='Object 1')
     
@@ -1227,9 +1467,15 @@ def test_tenant_isolation():
     # Verify isolation
     assert MyModel.objects.filter(tenant=tenant1).count() == 1
     assert MyModel.objects.filter(tenant=tenant2).count() == 1
+    
+    # Verify role permissions
+    assert roles.is_tenant_admin(admin)
+    assert not roles.is_tenant_admin(manager1)
+    assert roles.is_tenant_manager(manager1, tenant1)
+    assert not roles.is_tenant_manager(manager1, tenant2)
 ```
 
-### 6. Logging
+### 7. Logging
 
 **Enable debug logging during development**:
 
@@ -1241,22 +1487,44 @@ LOGGING = {
     'loggers': {
         'tenancy': {
             'handlers': ['console'],
-            'level': 'DEBUG',  # Shows detailed cloning information
+            'level': 'DEBUG',  # Shows detailed role checks and cloning information
         },
     },
 }
 ```
 
-### 7. Production Deployment
+### 8. Production Deployment
 
 **Security checklist**:
 - [ ] Use HTTPS for all tenant domains
 - [ ] Configure proper DNS for tenant domains
 - [ ] Set `DEBUG = False`
+- [ ] Set `TENANCY_BOOTSTRAP = False`
 - [ ] Use strong passwords for tenant admin users
-- [ ] Regularly backup database (includes all tenants)
+- [ ] Regularly backup database (includes all tenants and roles)
 - [ ] Monitor for unusual cross-tenant access attempts
-- [ ] Keep superuser count minimal
+- [ ] Keep `tenantadmin` role count minimal (1-2 users)
+- [ ] Review role assignments periodically
+
+**Monitoring**:
+```python
+# Example: Alert on suspicious access patterns
+from tenancy.roles import TenancyRole
+
+# Count tenant admins (should be small)
+admin_count = TenancyRole.objects.filter(role='tenantadmin').count()
+if admin_count > 5:
+    send_alert("Too many tenant admins!")
+
+# Monitor role changes
+from django.db.models.signals import post_save
+from tenancy.roles import TenancyRole
+
+@receiver(post_save, sender=TenancyRole)
+def log_role_assignment(sender, instance, created, **kwargs):
+    if created:
+        logger.warning(f"New role assigned: {instance}")
+```
 
 ---
 
@@ -1287,6 +1555,20 @@ For issues, questions, or contributions:
 ---
 
 ## Changelog
+
+### Version 2.0.0
+- **Breaking**: Replaced Django's `is_superuser`/`is_staff` with dedicated tenancy roles
+- Added `TenancyRole` model for role-based access control
+- Added `tenantadmin` role (system-wide access)
+- Added `tenantadmin` role (tenant-specific access)
+- Added role management utilities (`roles` manager)
+- Added `debug_tenancy_permissions` management command
+- Added `migrate_tenancy_permissions` command for upgrading
+- Added `bootstrap_first_tenant` command for initial setup
+- Removed `is_superadmin` field from `TenantUserMixin`
+- Updated admin site permission checks to use roles
+- Fixed MFA integration example to properly call `super().has_permission()`
+- Improved separation of authentication and authorization in admin flow
 
 ### Version 1.0.0
 - Initial release

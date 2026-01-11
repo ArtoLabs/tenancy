@@ -5,6 +5,7 @@
     <h1>{{ title }}</h1>
     <form method="post" novalidate>
       {% csrf_token %}
+      <input type="hidden" name="_tenant_create_nonce" value="{{ tenant_create_nonce }}">
       <table>
         {{ form.as_table }}
       </table>
