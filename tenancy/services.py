@@ -96,7 +96,7 @@ class TenantProvisioner:
                 tenant=tenant,
             )
             user.is_staff = True
-            user.is_superuser = False
+            user.is_superuser = True
             user.save()
             logger.info(f"✓ Admin user created: {user.username} (id={user.id})")
 
@@ -166,7 +166,7 @@ class TenantProvisioner:
                 tenant=tenant,
             )
             user.is_staff = True
-            user.is_superuser = False
+            user.is_superuser = True
             user.save()
 
             logger.info(f"✓ Tenant and admin created")
