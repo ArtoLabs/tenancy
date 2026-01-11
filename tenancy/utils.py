@@ -568,7 +568,7 @@ def _get_clone_mode(model_class: Type[models.Model]) -> str:
 # ============================================================================
 
 def _topological_sort_models(
-    models: List[Type[models.Model]]
+    models_list: List[Type[models.Model]]
 ) -> List[Type[models.Model]]:
     """
     Sort models in topological order based on foreign key dependencies.
