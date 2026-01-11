@@ -605,11 +605,11 @@ def _topological_sort_models(
     in_degree = defaultdict(int)
 
     # Initialize all models with 0 in-degree
-    for model in models:
+    for model in models_list:
         in_degree[model] = 0
 
     # Build the graph by examining foreign key relationships
-    for model in models:
+    for model in models_list:
         try:
             # Get all fields for this model
             all_fields = model._meta.get_fields()
@@ -650,7 +650,7 @@ def _topological_sort_models(
             in_degree[model] += 1
 
     # Find all models with no dependencies
-    queue = deque([model for model in models if in_degree[model] == 0])
+    queue = deque([model for model in models_list if in_degree[model] == 0])
     sorted_models = []
 
     # Process models in topological order
@@ -668,9 +668,9 @@ def _topological_sort_models(
                 queue.append(dependent)
 
     # Check if we processed all models
-    if len(sorted_models) != len(models):
+    if len(sorted_models) != len(models_list):
         # There's a cycle - find which models are involved
-        remaining = set(models) - set(sorted_models)
+        remaining = set(models_list) - set(sorted_models)
         raise CyclicDependencyError(
             f"Cyclic dependency detected between models: "
             f"{[m.__name__ for m in remaining]}"
