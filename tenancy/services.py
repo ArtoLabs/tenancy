@@ -1,4 +1,3 @@
-import logging
 from django.contrib.auth import get_user_model
 from django.apps import apps
 from django.db import IntegrityError, transaction
@@ -7,6 +6,7 @@ from .models import Tenant
 from .utils import clone_all_template_objects
 from .roles import TenancyRole, roles
 
+import logging
 from dataclasses import dataclass
 
 User = get_user_model()

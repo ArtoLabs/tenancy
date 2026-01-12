@@ -7,6 +7,10 @@ from .managers import TenantManager
 from .models import Tenant
 from .roles import roles
 
+import logging
+
+logger = logging.getLogger(__name__)
+
 
 class TenantUserMixin(models.Model):
     """
@@ -88,38 +92,15 @@ class TenantMixin(models.Model):
         """
         try:
             template_tenant = Tenant.objects.order_by("id").first()
+            logger.info(f"Obtained tenant template: {template_tenant}")
         except Tenant.DoesNotExist:
+            logger.error(f"Could not find: {cls.__name__} template queryset - no tenants exist.")
             return cls.objects.none()
-
         if template_tenant is None:
+            logger.error(f"Template_tenant returned None: {cls.__name__}")
             return cls.objects.none()
 
         return cls.objects.filter(tenant=template_tenant)
-
-    # def clone_for_tenant(self, new_tenant_id, overrides=None):
-    #     """
-    #     Creates a copy of this object for a specific tenant.
-    #     """
-    #     overrides = overrides or {}
-    #
-    #     data = model_to_dict(self, exclude=self.CLONE_EXCLUDE_FIELDS)
-    #
-    #     tenant_instance = Tenant.objects.get(id=new_tenant_id)
-    #     data["tenant"] = tenant_instance
-    #
-    #     data.update(overrides)
-    #
-    #     return self.__class__.objects.create(**data)
-
-    # @classmethod
-    # def clone_defaults_for_new_tenant(cls, new_tenant_id):
-    #     """
-    #     Clones all template objects for a new tenant.
-    #     """
-    #     new_instances = []
-    #     for template in cls.get_template_queryset():
-    #         new_instances.append(template.clone_for_tenant(new_tenant_id))
-    #     return new_instances
 
 
 class TenantAdminMixin:
