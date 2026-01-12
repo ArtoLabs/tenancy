@@ -641,7 +641,7 @@ def _topological_sort_models(
                 continue
 
             # Only consider relationships between models we're cloning
-            if related_model not in models:
+            if related_model not in models_list:
                 continue
 
             # model depends on related_model
@@ -733,21 +733,6 @@ def clone_all_template_objects(
 
     Returns:
         Dictionary mapping model classes to clone mappings
-
-    Example:
-        >>> new_tenant = Tenant.objects.create(name="New Tenant", domain="new.example.com")
-        >>>
-        >>> # Clone all with default modes
-        >>> cloned = clone_all_template_objects(new_tenant)
-        >>>
-        >>> # Or with runtime overrides
-        >>> cloned = clone_all_template_objects(
-        ...     new_tenant,
-        ...     field_overrides={
-        ...         SiteConfiguration: {'is_default': True}
-        ...     }
-        ... )
-        >>> print(f"Cloned objects from {len(cloned)} models")
     """
     excluded_models = excluded_models or []
 
@@ -798,6 +783,8 @@ def clone_all_template_objects(
                 f"Found {qs.count()} template objects for {model.__name__} "
                 f"(mode: {clone_mode})"
             )
+        else:
+            logger.info(f"No template objects for {model.__name__} (mode: {clone_mode}); skipping")
 
     if not querysets:
         logger.info("No template objects found to clone")
