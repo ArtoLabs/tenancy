@@ -87,20 +87,14 @@ class TenantMixin(models.Model):
 
     @classmethod
     def get_template_queryset(cls):
-        """
-        Returns a queryset of template rows for cloning (tenant=None).
-        """
-        try:
-            template_tenant = Tenant.objects.order_by("id").first()
-            logger.info(f"Obtained tenant template: {template_tenant}")
-        except Tenant.DoesNotExist:
-            logger.error(f"Could not find: {cls.__name__} template queryset - no tenants exist.")
-            return cls.objects.none()
+        template_tenant = Tenant.objects.order_by("id").first()
         if template_tenant is None:
-            logger.error(f"Template_tenant returned None: {cls.__name__}")
-            return cls.objects.none()
+            # use base manager so we don't depend on tenant context
+            return cls._base_manager.none()
 
-        return cls.objects.filter(tenant=template_tenant)
+        # IMPORTANT: bypass automatic tenant filtering
+        base_qs = cls._base_manager.all()
+        return base_qs.filter(tenant=template_tenant)
 
 
 class TenantAdminMixin:
