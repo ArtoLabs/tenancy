@@ -784,7 +784,7 @@ def clone_all_template_objects(
                 f"(mode: {clone_mode})"
             )
         else:
-            logger.info(f"No template objects for {model.__name__} (mode: {clone_mode}); skipping")
+            logger.info(f"No template objects for {model.__name__} (mode: {_get_clone_mode(model)}); skipping")
 
     if not querysets:
         logger.info("No template objects found to clone")
