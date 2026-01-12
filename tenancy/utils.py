@@ -545,22 +545,24 @@ def _resolve_foreign_keys(
     return data
 
 
-def _get_clone_mode(model_class: Type[models.Model]) -> str:
-    """
-    Get the cloning mode for a model as a human-readable string.
-
-    Args:
-        model_class: The model class to check
-
-    Returns:
-        String describing the clone mode: 'field_overrides', 'skeleton', or 'full'
-    """
+def _get_clone_mode(model_class) -> str:
     if hasattr(model_class, 'CLONE_FIELD_OVERRIDES'):
         return 'field_overrides'
-    elif hasattr(model_class, 'CLONE_MODE'):
-        return model_class.CLONE_MODE
-    else:
+
+    mode = getattr(model_class, 'CLONE_MODE', 'full')
+
+    # Normalize
+    if mode is None:
+        return 'none'
+    if isinstance(mode, str):
+        mode = mode.strip().lower()
+        if mode in ('none', 'full', 'skeleton'):
+            return mode
+        # unknown string -> treat as full (or raise if you prefer)
         return 'full'
+
+    # Any other weird type
+    return 'full'
 
 
 # ============================================================================
