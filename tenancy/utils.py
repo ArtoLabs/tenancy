@@ -42,70 +42,6 @@ def clone_tenant_objects(
 ) -> Dict[Type[models.Model], Dict[int, models.Model]]:
     """
     Clone objects from multiple models in topological order, respecting FK dependencies.
-
-    This function analyzes the foreign key relationships between models and clones
-    them in the correct order so that when a model references another via FK, the
-    referenced object has already been cloned and is available.
-
-    Cloning Modes:
-    --------------
-    Models can define cloning behavior via class-level metadata:
-
-    1. CLONE_MODE = 'full' (default)
-       - Clone all field values normally
-       - Foreign keys are resolved to newly cloned objects
-
-    2. CLONE_MODE = 'skeleton'
-       - Clone the row but set all nullable fields to None
-       - Only required fields and tenant are set
-       - Useful for creating blank configurations
-
-    3. CLONE_FIELD_OVERRIDES = {'field_name': value, ...}
-       - Clone with specific field values overridden
-       - Takes precedence over CLONE_MODE
-       - If both exist, CLONE_FIELD_OVERRIDES is used and a warning is logged
-
-    Args:
-        querysets: Dictionary mapping model classes to querysets of objects to clone.
-                  Example: {Theme: Theme.objects.filter(tenant=template_tenant)}
-
-        new_tenant: The target tenant instance for the cloned objects.
-
-        field_overrides: Optional dictionary of field overrides per model.
-                        These are applied AFTER model-level metadata.
-                        Example: {
-                            Theme: {'is_default': False},
-                            Font: {'size': 12}
-                        }
-
-    Returns:
-        Dictionary mapping model classes to dictionaries of old_id -> new_instance.
-        Example: {
-            Theme: {1: <Theme instance>, 2: <Theme instance>},
-            Font: {1: <Font instance>}
-        }
-
-    Raises:
-        CloneError: If cloning fails for any object
-        CyclicDependencyError: If circular dependencies are detected
-
-    Example:
-        >>> from myapp.models import Theme, Font, SiteConfiguration
-        >>>
-        >>> # Get template objects
-        >>> querysets = {
-        ...     Font: Font.objects.filter(tenant=template_tenant),
-        ...     Theme: Theme.objects.filter(tenant=template_tenant),
-        ...     SiteConfiguration: SiteConfiguration.objects.filter(tenant=template_tenant),
-        ... }
-        >>>
-        >>> # Clone for new tenant
-        >>> new_tenant = Tenant.objects.get(id=5)
-        >>> cloned_objects = clone_tenant_objects(querysets, new_tenant)
-        >>>
-        >>> # Access cloned objects
-        >>> old_font_id = 10
-        >>> new_font = cloned_objects[Font][old_font_id]
     """
     field_overrides = field_overrides or {}
 
@@ -176,29 +112,6 @@ def _clone_single_object(
 ) -> models.Model:
     """
     Clone a single object, respecting the model's cloning mode and metadata.
-
-    This function implements the core cloning logic:
-    1. Determines the cloning mode from model metadata
-    2. Extracts field values based on the mode
-    3. Resolves foreign key references from the clone map
-    4. Applies field overrides
-    5. Sets the new tenant
-    6. Creates and returns the new object
-
-    Cloning Mode Logic:
-    -------------------
-    - If CLONE_FIELD_OVERRIDES exists: use field-level overrides (precedence)
-    - Else if CLONE_MODE == 'skeleton': set all nullable fields to None
-    - Else: full clone (default behavior)
-
-    Args:
-        original_obj: The object to clone
-        new_tenant: The target tenant for the clone
-        clone_map: Map of already cloned objects to resolve FK references
-        field_overrides: Field values to override in the clone (applied last)
-
-    Returns:
-        The newly created cloned object
     """
     model_class = original_obj.__class__
 
@@ -280,17 +193,6 @@ def _extract_fields_with_model_overrides(
 ) -> Dict[str, Any]:
     """
     Extract fields and apply model-level CLONE_FIELD_OVERRIDES.
-
-    This mode clones the object normally but overrides specific fields
-    as defined in the model's CLONE_FIELD_OVERRIDES dictionary.
-
-    Args:
-        original_obj: The object to clone
-        exclude_fields: Fields to exclude from extraction
-        clone_field_overrides: Dictionary of field name -> value overrides
-
-    Returns:
-        Dictionary of field values with overrides applied
     """
     # Start with full clone
     data = model_to_dict(original_obj, exclude=exclude_fields)
@@ -305,68 +207,35 @@ def _extract_fields_with_model_overrides(
     return data
 
 
-def _extract_fields_skeleton_mode(
-    original_obj: models.Model,
-    exclude_fields: tuple
-) -> Dict[str, Any]:
-    """
-    Extract fields in skeleton mode - set fields to sensible defaults.
-
-    In skeleton mode:
-    - Required fields are cloned from the original
-    - Optional fields get intelligent defaults based on field type:
-      * CharField/TextField → empty string ""
-      * IntegerField/FloatField/DecimalField → 0
-      * BooleanField → False
-      * DateField/DateTimeField → None
-      * ForeignKey → first available instance of related model, or None
-      * Other fields → None
-    - If a field already has a default value defined, that default is used
-
-    This creates functional "blank" objects that won't cause __str__ issues
-    and can be immediately used/edited by users.
-
-    Args:
-        original_obj: The object to clone
-        exclude_fields: Fields to exclude from extraction
-
-    Returns:
-        Dictionary of field values with intelligent skeleton defaults
-    """
+def _extract_fields_skeleton_mode(original_obj, exclude_fields):
     model_class = original_obj.__class__
     data = {}
 
     for field in model_class._meta.get_fields():
-        # Skip excluded fields, reverse relations, and many-to-many
-        if (field.name in exclude_fields or
-            not hasattr(field, 'get_attname') or
-            field.many_to_many):
+        if (
+            field.name in exclude_fields
+            or not hasattr(field, "get_attname")
+            or field.many_to_many
+        ):
             continue
 
         field_name = field.name
-
-        # Skip tenant field (handled separately)
-        if field_name == 'tenant':
+        if field_name == "tenant":
             continue
 
-        # Determine if field is required
-        is_required = not field.null and not field.has_default()
-
-        if is_required:
-            # Keep required field values
-            data[field_name] = getattr(original_obj, field_name)
-            logger.debug(
-                f"Skeleton mode: keeping required field "
-                f"{model_class.__name__}.{field_name}"
-            )
-        else:
-            # Set optional fields to intelligent defaults
-            default_value = _get_skeleton_default_for_field(field)
+        # 1) Try YOUR existing type-based skeleton default first
+        default_value = _get_skeleton_default_for_field(field)
+        if default_value is not None:
             data[field_name] = default_value
-            logger.debug(
-                f"Skeleton mode: setting {model_class.__name__}.{field_name} "
-                f"to {default_value} (type: {type(field).__name__})"
-            )
+            continue
+
+        # 2) If your helper doesn't know what to do, fall back to prior logic:
+        #    keep original if required; else use None
+        is_required = (not getattr(field, "null", False)) and (not field.has_default())
+        if is_required:
+            data[field_name] = getattr(original_obj, field_name)
+        else:
+            data[field_name] = None
 
     return data
 
@@ -374,20 +243,6 @@ def _extract_fields_skeleton_mode(
 def _get_skeleton_default_for_field(field) -> Any:
     """
     Get an intelligent default value for a field in skeleton clone mode.
-
-    This function determines appropriate "blank" values based on field type
-    to ensure cloned skeleton objects are functional and don't cause issues
-    with __str__ methods or validation.
-
-    Priority:
-    1. If field has a default value defined, use it
-    2. Otherwise, use type-based intelligent defaults
-
-    Args:
-        field: Django model field instance
-
-    Returns:
-        Appropriate default value for the field type
     """
     # If field has an explicit default, use it
     if field.has_default():
