@@ -207,6 +207,10 @@ def _extract_fields_with_model_overrides(
     return data
 
 
+# Sentinel used by _get_skeleton_default_for_field to mean
+# "I don't know how to generate a safe default for this field".
+_SKEL_UNSET = object()
+
 def _extract_fields_skeleton_mode(original_obj, exclude_fields):
     model_class = original_obj.__class__
     data = {}
@@ -223,81 +227,72 @@ def _extract_fields_skeleton_mode(original_obj, exclude_fields):
         if field_name == "tenant":
             continue
 
-        # 1) Try YOUR existing type-based skeleton default first
+        # Let Django handle auto-managed timestamps by omitting them.
+        if getattr(field, "auto_now", False) or getattr(field, "auto_now_add", False):
+            continue
+
         default_value = _get_skeleton_default_for_field(field)
-        if default_value is not None:
+        if default_value is not _SKEL_UNSET:
             data[field_name] = default_value
             continue
 
-        # 2) If your helper doesn't know what to do, fall back to prior logic:
-        #    keep original if required; else use None
-        is_required = (not getattr(field, "null", False)) and (not field.has_default())
-        if is_required:
-            data[field_name] = getattr(original_obj, field_name)
-        else:
+        if getattr(field, "null", False):
             data[field_name] = None
+            continue
+
+        raise CloneError(
+            f"Skeleton clone cannot generate a safe default for required field "
+            f"{model_class.__name__}.{field_name} ({field.__class__.__name__}). "
+            f"Add a model default, make it nullable, or provide CLONE_FIELD_OVERRIDES."
+        )
 
     return data
 
 
 def _get_skeleton_default_for_field(field) -> Any:
-    """
-    Get an intelligent default value for a field in skeleton clone mode.
-    """
-    # If field has an explicit default, use it
     if field.has_default():
-        default = field.get_default()
-        logger.debug(f"Using field default: {default}")
-        return default
+        return field.get_default()
 
-    # String fields - use empty string to prevent None in __str__
-    if isinstance(field, (models.CharField, models.TextField,
-                         models.SlugField, models.EmailField,
-                         models.URLField)):
+    if isinstance(field, (models.CharField, models.TextField, models.SlugField, models.EmailField, models.URLField)):
         return ""
 
-    # Numeric fields - use 0
-    if isinstance(field, (models.IntegerField, models.BigIntegerField,
-                         models.SmallIntegerField, models.PositiveIntegerField,
-                         models.PositiveSmallIntegerField)):
+    if isinstance(field, models.UUIDField):
+        return uuid.uuid4()
+
+    if isinstance(field, (models.IntegerField, models.BigIntegerField, models.SmallIntegerField,
+                          models.PositiveIntegerField, models.PositiveSmallIntegerField)):
         return 0
 
     if isinstance(field, (models.FloatField, models.DecimalField)):
         return 0
 
-    # Boolean fields - use False
     if isinstance(field, models.BooleanField):
         return False
 
-    # Foreign Key - try to find first available instance
+    if isinstance(field, models.BinaryField):
+        return b""
+
+    if isinstance(field, models.DurationField):
+        return timedelta(0)
+
     if isinstance(field, models.ForeignKey):
-        try:
-            related_model = field.related_model
-            # Try to get the first instance of the related model
-            first_instance = related_model.objects.first()
-            if first_instance:
-                logger.debug(
-                    f"Found first instance of {related_model.__name__} "
-                    f"(id={first_instance.id}) for FK default"
-                )
-                return first_instance
-        except Exception as e:
-            logger.warning(
-                f"Could not get first instance for FK field {field.name}: {e}"
-            )
-        return None
+        return _SKEL_UNSET
 
-    # Date/Time fields - use None (these typically shouldn't be empty string)
-    if isinstance(field, (models.DateField, models.DateTimeField,
-                         models.TimeField)):
-        return None
+    if isinstance(field, models.DateTimeField):
+        return timezone.now()
+    if isinstance(field, models.DateField):
+        return timezone.localdate()
+    if isinstance(field, models.TimeField):
+        return timezone.localtime().time()
 
-    # JSON fields - use empty dict or list
     if isinstance(field, models.JSONField):
         return {}
 
-    # All other field types - use None
-    return None
+    if isinstance(field, models.GenericIPAddressField):
+        return "0.0.0.0"
+
+    return _SKEL_UNSET
+
 
 
 def _resolve_foreign_keys(
