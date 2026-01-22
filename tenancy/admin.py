@@ -9,6 +9,8 @@ from django.utils.html import format_html
 from django.utils.translation import gettext as _
 from django.conf import settings
 from django.utils.module_loading import import_string
+from django.contrib.auth.views import redirect_to_login
+from django.core.exceptions import PermissionDenied
 
 from .models import Tenant
 from .forms import TenantCreationForm
@@ -111,6 +113,22 @@ class SuperAdminSite(AdminSite):
     site_header = "Tenant System Administration"
     site_title = "Tenant Admin"
     index_title = "System Management"
+
+    def admin_view(self, view, cacheable=False):
+        inner = super().admin_view(view, cacheable=cacheable)
+
+        def wrapped(request, *args, **kwargs):
+            # authenticated but not allowed: 403, not login redirect
+            if request.user.is_authenticated and not self.has_permission(request):
+                raise PermissionDenied
+
+            # not authenticated: go to your real login page, not /admin/login/
+            if not request.user.is_authenticated:
+                return redirect_to_login(request.get_full_path(), settings.LOGIN_URL)
+
+            return inner(request, *args, **kwargs)
+
+        return wrapped
 
     def has_permission(self, request):
         """
