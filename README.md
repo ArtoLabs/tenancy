@@ -44,6 +44,10 @@ pip install git+https://github.com/ArtoLabs/tenancy.git
 
 ### 1. Add to Installed Apps
 
+This step enables the tenancy package inside your Django project. Adding the app registers its models, admin sites, system checks, cloning utilities, and role system with Django. Without this, none of the tenant resolution, tenant-aware models, or admin separation logic will be available, and Django will treat your project as a single-tenant application.
+
+By installing the app early, Django can also run tenancy’s built-in system checks at startup, which warn you about unsafe unique constraints and other configuration issues before they cause runtime failures.
+
 ```python
 # settings.py
 INSTALLED_APPS = [
@@ -62,6 +66,10 @@ INSTALLED_APPS = [
 
 ### 2. Add Middleware
 
+The tenant middleware is responsible for resolving which tenant a request belongs to, based on the incoming hostname. It attaches the resolved tenant to the request, activates the tenant context for the current thread, and enforces cross-tenant access rules.
+
+It must run after Django’s authentication middleware so that it can safely evaluate the authenticated user against the resolved tenant. This middleware is the backbone of tenant isolation; without it, tenant-aware models and authentication guards cannot function correctly.
+
 ```python
 # settings.py
 MIDDLEWARE = [
@@ -77,10 +85,11 @@ MIDDLEWARE = [
 ]
 ```
 
-### 3. Add Authentication Backend (Recommended)
+### 3. Add Authentication Backend
 
-The tenancy package provides a tenant-aware authentication backend that prevents users from authenticating on the wrong tenant domain when using Django’s authenticate() pipeline (including username/password login and Django admin login).
+This authentication backend adds a tenant-aware guard to Django’s normal authentication pipeline. It ensures that a user can only authenticate on tenant domains they are allowed to access, even if their username and password are otherwise valid.
 
+This protects common entry points such as login views, Django admin login, and any code path that calls authenticate(). Without this backend, a user could successfully log in on the wrong tenant domain and only be rejected later, which is both confusing and unsafe.
 ```python
 # settings.py
 AUTHENTICATION_BACKENDS = [
@@ -90,6 +99,10 @@ AUTHENTICATION_BACKENDS = [
 ```
 
 ### 4. Create Custom User Model
+
+A custom user model is required so users can be explicitly associated with tenants. The tenant user mixin adds a tenant relationship to your user model while remaining compatible with Django’s authentication system.
+
+This association allows the tenancy package to reason about which tenant a user belongs to, enforce login rules, and apply correct scoping in the admin interfaces. Defining this early is critical, as Django does not allow changing the user model after initial migrations.
 
 ```python
 # myapp/models.py
@@ -108,6 +121,14 @@ AUTH_USER_MODEL = 'myapp.User'
 
 ### 5. Add Tenant-Aware Models
 
+Any model that should be isolated per tenant must inherit from the tenant mixin. This automatically adds a tenant field, enables tenant-scoped querying, and integrates the model into the tenant cloning system used when provisioning new tenants.
+
+Tenant-aware models are automatically filtered by the active tenant context, which prevents accidental cross-tenant data access in normal queries. They also participate in template cloning, allowing new tenants to start with predefined data.
+
+#### NOTE:
+
+This tenancy package supports multiple cloning modes. One of them, **skeleton mode**, creates a minimal "blank" version of each row for a new tenant rather than copying real data from an existing tenant. For skeleton cloning to work correctly and safely, your models must be designed with defaults in mind. Please see the cloning section below for more information.
+
 ```python
 # myapp/models.py
 from django.db import models
@@ -123,6 +144,10 @@ class Product(TenantMixin):
 
 ### 6. Configure URLs
 
+The tenancy package provides two separate admin sites: one for system-level tenant administration and one for tenant-scoped management. Mapping them to different URLs keeps responsibilities clearly separated and prevents privilege confusion.
+
+The system admin site is used by tenant admins to create and manage tenants. The tenant admin site is used by tenant managers to manage content within their own tenant only. This separation is fundamental to the security model.
+
 ```python
 # urls.py
 from django.urls import path, include
@@ -136,6 +161,10 @@ urlpatterns = [
 ```
 
 ### 7. Register Models in Admin
+
+Models must be registered separately with each admin site to control who can see and manage them. Tenant admin registrations are automatically scoped to the current tenant, while super admin registrations allow cross-tenant visibility.
+
+Using the provided admin mixins ensures that permissions, query filtering, and tenant assignment are handled consistently and safely. 
 
 ```python
 # myapp/admin.py
@@ -158,6 +187,10 @@ class ProductSuperAdmin(SuperUserAdminMixin, admin.ModelAdmin):
 ```
 
 ### 8. Run Migrations
+
+Finally, apply database migrations to create the tenant model, role tables, tenant fields, and supporting indexes. This step materializes the tenancy system in the database and enables tenant provisioning and isolation at runtime.
+
+Always run migrations after configuring the user model and tenant mixins, as these affect the database schema in fundamental ways.
 
 ```bash
 python manage.py makemigrations
@@ -551,6 +584,30 @@ class SiteConfig(TenantMixin):
 - Fields with `default=` → Uses that default
 
 **Result**: New tenant gets empty/default values, preventing null `__str__` issues while allowing customization.
+
+#### Model Defaults and Skeleton Cloning
+
+
+When skeleton cloning runs, the system attempts to generate reasonable default values for many common Django field types automatically, such as strings, numbers, booleans, JSON, dates, and UUIDs. However, this automatic behavior is intentionally limited. If a field is required (`null=False`) and has no default that can be safely generated, the clone process will stop and raise an error explaining which field needs attention.
+
+Because of this, it is **strongly recommended** that every field in any model that will be cloned defines an explicit default, or is marked as nullable where appropriate. Relying on implicit behavior can lead to clone failures, especially as your schema evolves.
+
+#### Important Notes
+
+* **Required fields without defaults are not allowed in skeleton cloning.** If no safe default can be generated, an error will be raised and the tenant will not be created.
+* **Certain field types cannot have meaningful automatic defaults.** In particular, image and file fields cannot be safely defaulted. If a model includes image or file fields and is expected to support skeleton cloning, those fields must be declared with `null=True` and `blank=True`.
+* **Foreign keys and other relational fields** may require explicit defaults or nullable settings, depending on your data model and cloning strategy.
+
+#### Best Practice
+
+Treat skeleton cloning as a contract: if a model is cloneable, it must be able to exist in a clean, minimal state. Defining your own defaults makes this explicit, predictable, and future-proof.
+
+If skeleton cloning fails, the error message will always indicate the exact model and field that needs a default or adjustment.
+
+
+
+
+
 
 ### Mode 3: Field-Level Overrides
 
