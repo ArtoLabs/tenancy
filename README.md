@@ -25,6 +25,7 @@ A comprehensive Django package for building multi-tenant applications with compl
 - [Cloning System](#cloning-system)
 - [Admin Interfaces](#admin-interfaces)
 - [Advanced Usage](#advanced-usage)
+- [Tenant Provisioning Signal](#tenant-provisioning-signal)
 - [Troubleshooting](#troubleshooting)
 - [Best Practices](#best-practices)
 
@@ -1276,6 +1277,96 @@ my_model.save()  # Automatically assigned to tenant
 tenant.deactivate()
 ```
 
+---
+
+## Tenant Provisioning Signal
+
+The package emits a `tenant_provisioned` signal after each tenant is fully created, allowing you to hook into the provisioning process for custom setup tasks.
+
+### When It's Emitted
+
+The signal fires once per tenant, immediately after:
+- Tenant record is created
+- Tenant admin user is created
+- All template objects are cloned
+- Database transaction commits successfully
+
+### Signal Payload
+```python
+tenant_provisioned.send(
+    sender=TenantProvisioner,
+    tenant=tenant,           # The new Tenant instance
+    domain=domain,           # Tenant's domain (convenience)
+    admin_user=user,         # The created admin user
+    clone_summary={...},     # Dict: {model_label: count}
+    total_cloned=42          # Total objects cloned
+)
+```
+
+### Registering a Receiver
+
+**1. Create the receiver function:**
+```python
+# myapp/tenancy_receivers.py
+from django.dispatch import receiver
+from tenancy.signals import tenant_provisioned
+
+@receiver(tenant_provisioned)
+def on_tenant_provisioned(sender, tenant, domain, admin_user, clone_summary, **kwargs):
+    """
+    React to tenant provisioning.
+    
+    IMPORTANT: Use .all_tenants() to bypass automatic tenant scoping,
+    since receivers run outside the normal request lifecycle.
+    """
+    from myapp.models import SiteSettings
+    
+    # Explicitly target the new tenant
+    SiteSettings.objects.all_tenants().update_or_create(
+        tenant=tenant,
+        defaults={
+            'primary_domain': domain,
+            'setup_completed': True,
+        }
+    )
+    
+    # Example: Log provisioning details
+    print(f"Provisioned {tenant.name}: {clone_summary}")
+```
+
+**2. Register in your app config:**
+```python
+# myapp/apps.py
+from django.apps import AppConfig
+
+class MyAppConfig(AppConfig):
+    name = 'myapp'
+    
+    def ready(self):
+        import myapp.tenancy_receivers  # Import to register receivers
+```
+
+### Common Use Cases
+
+- Update tenant-scoped configuration with the new domain
+- Provision external resources (DNS, SSL certificates, third-party accounts)
+- Send welcome emails or notifications
+- Enqueue background jobs for data import
+- Create audit log entries
+
+### ⚠️ Critical: Tenant Scoping in Receivers
+
+Signal receivers run outside the request lifecycle, so **there is no active tenant context**. Always use `.all_tenants()` to bypass automatic filtering:
+```python
+# ❌ WRONG - filters by current tenant (probably None)
+SiteSettings.objects.update_or_create(...)
+
+# ✅ CORRECT - explicitly targets the new tenant
+SiteSettings.objects.all_tenants().update_or_create(
+    tenant=tenant,
+    defaults={...}
+)
+```
 ---
 
 ## Troubleshooting
