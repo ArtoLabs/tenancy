@@ -5,6 +5,7 @@ from django.db import IntegrityError, transaction
 from .models import Tenant
 from .utils import clone_all_template_objects
 from .roles import TenancyRole, roles
+from .signals import tenant_provisioned
 
 import logging
 from dataclasses import dataclass
@@ -101,20 +102,12 @@ class TenantProvisioner:
             logger.info(f"✓ Admin user created: {user.username} (id={user.id})")
 
             # Step 3: Clone all template objects for the new tenant
-            # This automatically:
-            # - Discovers all models using TenantMixin
-            # - Respects each model's CLONE_MODE or CLONE_FIELD_OVERRIDES
-            # - Clones in topological order (handles FK dependencies)
-            # - Returns a map of old IDs to new instances
             logger.info("=" * 60)
             logger.info("Beginning template object cloning...")
             logger.info("=" * 60)
 
             clone_map = clone_all_template_objects(
                 new_tenant=tenant,
-                # template_tenant=None,  # Uses first tenant by default
-                # excluded_models=[],    # Optionally exclude specific models
-                # field_overrides={}     # Optionally override fields at runtime
             )
 
             # Log cloning summary
@@ -123,15 +116,32 @@ class TenantProvisioner:
             logger.info(f"✓ Cloning complete: {total_cloned} objects across {len(clone_map)} models")
             logger.info("=" * 60)
 
-            # Log per-model breakdown
             for model_class, cloned_objects in clone_map.items():
-                logger.info(
-                    f"  • {model_class.__name__}: {len(cloned_objects)} objects"
+                logger.info(f"  • {model_class.__name__}: {len(cloned_objects)} objects")
+
+            # Build a compact summary payload for receivers (avoid sending clone_map itself)
+            clone_summary = {
+                model_class._meta.label: len(cloned_objects)
+                for model_class, cloned_objects in clone_map.items()
+            }
+
+            # Fire the signal only after the transaction commits successfully.
+            # This ensures receivers can safely query tenant-scoped cloned rows.
+            def _emit():
+                tenant_provisioned.send(
+                    sender=TenantProvisioner,
+                    tenant=tenant,
+                    domain=tenant.domain,
+                    admin_user=user,
+                    clone_summary=clone_summary,
+                    total_cloned=total_cloned,
                 )
 
-            return tenant, user #, clone_map
+            transaction.on_commit(_emit)
+
+            return tenant, user
+
         except IntegrityError as e:
-            # domain uniqueness collision
             raise TenantProvisioningError(
                 f"A tenant with domain '{tenant_data.get('domain')}' already exists."
             ) from e
