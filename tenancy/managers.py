@@ -3,6 +3,11 @@ from django.conf import settings
 
 from .context import get_current_tenant, in_request_context, is_tenant_required
 
+import logging
+import traceback
+
+logger = logging.getLogger(__name__)
+
 
 class TenantQuerySet(models.QuerySet):
     """
@@ -60,14 +65,35 @@ class TenantQuerySet(models.QuerySet):
         if not hasattr(self.model, '_is_tenant_model') or not self.model._is_tenant_model():
             return self
 
+
         current_tenant = get_current_tenant()
         if current_tenant is None:
             # During a real request, missing tenant context is a bug (unless tenant isn't required).
             strict = getattr(settings, "TENANCY_STRICT_TENANT_CONTEXT", True)
-            if strict and in_request_context() and is_tenant_required():
-                raise MissingTenantError(_missing_tenant_help(self.model))
+            in_request = in_request_context()
+            tenant_required = is_tenant_required()
+
+            logger.debug(
+                "Missing tenant context for model %s.%s: strict=%s, in_request=%s, tenant_required=%s",
+                getattr(self.model, "_meta", getattr(self.model, "__name__", "<unknown>")),
+                getattr(self.model, "__name__", "<unknown>"),
+                strict,
+                in_request,
+                tenant_required,
+            )
+
+            if strict and in_request and tenant_required:
+                # Log full help message and stack for debugging before raising
+                help_msg = _missing_tenant_help(self.model)
+                logger.error("Raising MissingTenantError for %s.%s: %s",
+                             getattr(self.model, "_meta", getattr(self.model, "__name__", "<unknown>")),
+                             getattr(self.model, "__name__", "<unknown>"),
+                             help_msg)
+                logger.debug("Stack trace:\n%s", "".join(traceback.format_stack()))
+                raise MissingTenantError(help_msg)
 
             # Outside request context (startup/import/shell), keep safe behavior
+            logger.info("Returning empty queryset because tenant context is missing (non-request or non-strict).")
             return self.none()
 
         # Check if already filtered by tenant
