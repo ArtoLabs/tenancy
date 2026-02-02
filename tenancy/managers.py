@@ -9,31 +9,26 @@ import traceback
 def warn_missing_tenant(model):
     """
     Print a loud, helpful warning when tenant-scoped queries occur without a tenant.
-    Adds a best-effort pointer to the calling code location (file:line).
+    Includes a best-effort pointer to the calling code location (file:line).
     Does NOT raise; execution continues.
     """
     model_name = model.__name__
     app_label = model._meta.app_label
 
-    # Best-effort: find the first stack frame that isn't inside the tenancy app itself.
+    # Try to locate the first stack frame that is not inside the tenancy app itself
     stack = traceback.extract_stack()
-
-    # Paths we want to treat as "internal" and skip when searching for the trigger.
-    # This is intentionally conservative: we skip anything in the tenancy package directory.
-    tenancy_dir = os.path.dirname(__file__)  # directory containing managers.py
+    tenancy_dir = os.path.dirname(__file__)
     trigger_frame = None
 
-    # Walk backwards (closest call first)
     for frame in reversed(stack):
-        filename = frame.filename
+        filename = os.path.abspath(frame.filename)
 
-        # Skip frames inside this tenancy package directory
-        if os.path.commonpath([tenancy_dir, os.path.abspath(filename)]) == os.path.abspath(tenancy_dir):
+        # Skip frames inside the tenancy package
+        if os.path.commonpath([tenancy_dir, filename]) == tenancy_dir:
             continue
 
-        # Optional: skip Django internals to get to user code quicker
-        # Comment this block out if you'd rather see the first non-tenancy frame, even if it's Django.
-        if ("site-packages" in filename and os.sep + "django" + os.sep in filename):
+        # Skip Django internals to surface user code more reliably
+        if "site-packages" in filename and os.sep + "django" + os.sep in filename:
             continue
 
         trigger_frame = frame
@@ -52,22 +47,27 @@ def warn_missing_tenant(model):
         (
             "\n"
             "==================== TENANCY WARNING ====================\n"
-            f"Tenant is None while querying a tenant-scoped model:\n"
+            "Tenant is None while querying a tenant-scoped model:\n"
             f"  {app_label}.{model_name}\n"
             "\n"
             "Likely trigger (first non-tenancy caller frame):\n"
             f"  {trigger_info}\n"
             "\n"
             "This queryset is being forced to .none() for safety.\n"
-            "Most common cause:\n"
-            "  A form field (or other module-level code) created a queryset at import time.\n"
             "\n"
-            f"Example of the problematic pattern:\n"
-            f"  field = forms.ModelChoiceField(queryset={model_name}.objects.all())\n"
+            "Common causes:\n"
             "\n"
-            "Canonical Django fix (copy/paste):\n"
+            "1) Explicit form fields declared at import time, e.g.:\n"
+            f"     field = forms.ModelChoiceField(queryset={model_name}.objects.all())\n"
             "\n"
-            "  # forms.py\n"
+            "2) ModelForm relationship fields (FK / M2M).\n"
+            "   Django auto-creates ModelChoiceFields for these at class import time,\n"
+            "   which evaluates their querysets before tenant context exists.\n"
+            "\n"
+            "Canonical Django fixes:\n"
+            "\n"
+            "CASE 1: Explicit form fields\n"
+            "--------------------------------------------------\n"
             "  class MyForm(forms.Form):\n"
             f"      person = forms.ModelChoiceField(queryset={model_name}.objects.none())\n"
             "\n"
@@ -75,26 +75,33 @@ def warn_missing_tenant(model):
             "          super().__init__(*args, **kwargs)\n"
             f"          self.fields['person'].queryset = {model_name}.objects.all()\n"
             "\n"
-            "If you need request-specific behavior, pass request into the form:\n"
+            "CASE 2: ModelForm relationship fields (FK / M2M)\n"
+            "--------------------------------------------------\n"
+            "  class MyModelForm(forms.ModelForm):\n"
+            f"      related = forms.ModelChoiceField(\n"
+            f"          queryset={model_name}.objects.all_tenants().none()\n"
+            "      )\n"
             "\n"
-            "  # view\n"
-            "  def get_form_kwargs(self):\n"
-            "      kwargs = super().get_form_kwargs()\n"
-            "      kwargs['request'] = self.request\n"
-            "      return kwargs\n"
+            "      class Meta:\n"
+            "          model = MyModel\n"
+            "          fields = ['related', ...]\n"
             "\n"
-            "  # form\n"
-            "  def __init__(self, *args, request=None, **kwargs):\n"
-            "      super().__init__(*args, **kwargs)\n"
-            f"      self.fields['person'].queryset = {model_name}.objects.all()\n"
+            "      def __init__(self, *args, **kwargs):\n"
+            "          super().__init__(*args, **kwargs)\n"
+            f"          self.fields['related'].queryset = {model_name}.objects.all()\n"
+            "\n"
+            "Explanation:\n"
+            "  ModelForm auto-generates relationship fields at import time.\n"
+            "  Overriding them with an EMPTY placeholder queryset prevents\n"
+            "  tenant evaluation before runtime.\n"
             "\n"
             "This warning is non-fatal: the program will continue.\n"
             "=========================================================\n"
         ),
         RuntimeWarning,
-        # Keep stacklevel small since we're already printing our own best-effort location.
         stacklevel=2,
     )
+
 
 
 
