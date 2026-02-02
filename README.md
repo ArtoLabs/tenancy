@@ -336,9 +336,526 @@ sudo brew services start dnsmasq
 
 ---
 
-## Core Concepts
+# Core Concepts
 
-### The Tenant Model
+## 1. Understanding the Tenant Context
+
+This package enforces tenancy by maintaining a current tenant context. All tenant-aware models scope their queries relative to that context. If no tenant context is active, tenant-aware queries intentionally return no rows.
+
+This behavior is the foundation of tenant safety.
+
+### How the Tenant Context Is Set
+
+During a normal HTTP request, the tenant context is automatically established by middleware.
+
+The middleware resolves the tenant from the request's host name (for example, `tenant1.example.com`), activates that tenant for the duration of the request, and attaches it to the request object. While the request is being processed:
+
+- All tenant-aware models automatically filter to that tenant
+- No manual `tenant=...` filtering is required
+- Related objects remain safely scoped
+
+When the request finishes, the tenant context is cleared.
+
+As long as a request is handled under a valid tenant domain and passes through the middleware, tenant scoping is always active.
+
+### When No Tenant Context Exists
+
+A tenant context does not exist in the following situations:
+
+- Requests where tenant resolution is intentionally skipped (for example, bootstrap or global admin paths)
+- Requests to hostnames that do not match an active tenant
+- Any code running outside the request/response lifecycle, including:
+  - Django shell
+  - Management commands
+  - Background tasks
+  - Startup code
+  - Standalone scripts
+
+In these cases, tenant-aware queries return empty querysets by design. This prevents accidental cross-tenant access when the system cannot safely determine intent.
+
+If you ever see an unexpectedly empty queryset, the first thing to check is whether a tenant context is active.
+
+### Working With a Tenant Outside Requests
+
+When running code outside middleware and you want to operate on a specific tenant, you must be explicit. There are two supported patterns.
+
+**Activate a tenant context** when you want normal tenant scoping to apply:
+```python
+from tenancy.context import activate_tenant, deactivate_tenant
+from tenancy.models import Tenant
+from myapp.models import Article
+
+tenant = Tenant.objects.get(domain="tenant1.example.com")
+
+activate_tenant(tenant)
+try:
+    articles = Article.objects.all()
+finally:
+    deactivate_tenant()
+```
+
+This is the preferred approach for per-tenant scripts, background jobs, and maintenance tasks.
+
+**Bypass tenant scoping explicitly** when you need cross-tenant access:
+```python
+Article.objects.all_tenants()
+```
+
+You can then filter by tenant manually if needed:
+```python
+Article.objects.all_tenants().filter(tenant=tenant)
+```
+
+### Why This Design Exists
+
+Row-based multi-tenancy fails most often through silent data leaks, not crashes. This system defaults to returning no data unless tenant intent is explicit. Safe behavior is automatic; unsafe behavior requires conscious action.
+
+Once you understand that "no tenant context means no data," the rest of the system becomes predictable and reliable.
+
+## 2. Making a Model Tenant-Aware
+
+A model becomes tenant-aware by inheriting from the provided tenant mixin. This is the single switch that tells the system, "rows of this model belong to a tenant and must be isolated."
+
+If a model should have separate data per tenant, it must use the mixin. If it should be shared globally across all tenants, it must not.
+
+### Basic Tenant-Aware Model
+```python
+from django.db import models
+from tenancy.mixins import TenantMixin
+
+class Article(TenantMixin, models.Model):
+    title = models.CharField(max_length=200)
+    body = models.TextField()
+
+    def __str__(self):
+        return self.title
+```
+
+This does several important things automatically:
+
+- Adds a tenant foreign key to the model
+- Registers the model as tenant-scoped
+- Attaches a tenant-aware manager by default
+- Ensures all ORM queries are filtered to the active tenant context
+
+Once this is in place, standard queries behave as expected:
+```python
+Article.objects.all()
+```
+
+Returns only rows belonging to the current tenant.
+
+You should never manually add `tenant=...` filters in normal application code. If you feel the need to do that, something is likely misconfigured.
+
+### Models That Should NOT Be Tenant-Aware
+
+Not every model should be tenant-scoped.
+
+Examples of models that should usually remain global:
+
+- The Tenant model itself
+- System configuration tables
+- Feature flags shared across tenants
+- Reference or lookup tables intended to be global
+
+These models should not inherit from `TenantMixin` and will behave like normal Django models.
+
+### Ordering and Inheritance Rules
+
+When using multiple mixins, `TenantMixin` should appear before `models.Model` and generally before other behavioral mixins:
+```python
+class Article(TenantMixin, TimestampMixin, models.Model):
+    ...
+```
+
+This ensures the tenant field and manager are applied correctly.
+
+### Required Fields and Defaults
+
+Tenant-aware models participate in cloning when new tenants are created. Because of this:
+
+- Required fields must have safe defaults, be nullable, or be explicitly handled during cloning
+- Unsafe required fields will cause tenant provisioning to fail loudly rather than create invalid rows
+
+This is intentional. Cloning errors should surface early.
+
+### Quick Sanity Check
+
+A model is correctly tenant-aware if all of the following are true:
+
+- It inherits from `TenantMixin`
+- It does not manually define a tenant field
+- It does not override `objects` with a non-tenant manager
+- Queries return data during a tenant request and return no data without a tenant context
+
+If those conditions are met, the model is correctly isolated.
+
+## 3. Using the Tenant Manager (Required)
+
+Tenant isolation in this package is enforced entirely through a custom manager and queryset. For tenant-aware models, the manager is not an implementation detail. It is part of the tenancy contract.
+
+If a tenant-aware model uses a manager that does not inherit from the tenant manager, tenant scoping will be broken.
+
+This applies even if the model correctly inherits from TenantMixin.
+
+### The Default Manager
+
+When you use TenantMixin without defining a custom manager, the model automatically receives a tenant-aware manager. In the simplest case, you do not need to do anything.
+```python
+class Article(TenantMixin, models.Model):
+    title = models.CharField(max_length=200)
+```
+
+This is already safe.
+
+### Adding a Custom Manager
+
+The moment you define a custom manager, you must inherit from TenantManager.
+```python
+from tenancy.managers import TenantManager
+
+class ArticleManager(TenantManager):
+    def published(self):
+        return self.get_queryset().filter(is_published=True)
+
+class Article(TenantMixin, models.Model):
+    title = models.CharField(max_length=200)
+    is_published = models.BooleanField(default=False)
+
+    objects = ArticleManager()
+```
+
+This preserves tenant scoping while allowing custom query helpers.
+
+The key rule is simple: always build on top of TenantManager.
+
+### Overriding get_queryset()
+
+If you override get_queryset(), you must start from super().
+```python
+class ArticleManager(TenantManager):
+    def get_queryset(self):
+        return super().get_queryset().filter(is_active=True)
+```
+
+Failing to call super() will bypass tenant filtering and cause empty or cross-tenant results depending on context.
+
+### What Not to Do
+
+Do not attach a plain Django manager to a tenant-aware model.
+```python
+class ArticleManager(models.Manager):
+    ...
+```
+
+This will silently disable tenant scoping and cause subtle bugs, especially in:
+
+- Cloning
+- Background tasks
+- Signals
+- Admin views
+
+If you see empty querysets or unexpected data, always check the manager first.
+
+### Cross-Tenant Queries
+
+The tenant manager provides an explicit escape hatch for administrative operations:
+```python
+Article.objects.all_tenants()
+```
+
+This bypasses tenant filtering and returns all rows across all tenants. Use it sparingly and intentionally.
+
+### Quick Checklist
+
+Before moving on, ensure:
+
+- Every tenant-aware model uses TenantManager (directly or indirectly)
+- Custom managers call super().get_queryset()
+- Custom querysets inherit from TenantQuerySet
+- Plain Django managers are never used on tenant models
+
+If these rules are followed, tenant scoping remains consistent everywhere in your application.
+
+## 4. Using Custom Tenant-Aware QuerySets
+
+Custom querysets are used when you want reusable, chainable query logic on tenant-aware models. In a multi-tenant system like this one, querysets are not just a convenience layer. They are part of the tenant isolation mechanism.
+
+Because tenant scoping is enforced at the ORM level, any queryset used by a tenant-aware model must explicitly apply the tenant filter. This package provides a tenant-aware base queryset to support that.
+
+### The TenantQuerySet Base Class
+
+This package defines a `TenantQuerySet` class that applies tenant filtering internally. It is responsible for:
+
+- Applying the tenant filter when a tenant context is active
+- Returning empty querysets when no tenant context exists
+- Supporting an explicit escape hatch for cross-tenant access
+
+If you want custom queryset methods on a tenant-aware model, you must inherit from `TenantQuerySet`.
+```python
+from tenancy.managers import TenantQuerySet
+
+class ArticleQuerySet(TenantQuerySet):
+    def published(self):
+        return self.filter(is_published=True)
+
+    def featured(self):
+        return self.filter(is_featured=True)
+```
+
+This ensures that all query logic is layered on top of tenant-safe behavior.
+
+### Attaching a Custom QuerySet (Important)
+
+Unlike some common Django patterns, you cannot rely on `Manager.from_queryset()` alone in this package.
+
+`TenantManager` constructs its queryset explicitly and applies tenant filtering itself. Because of that, attaching a custom queryset requires overriding `get_queryset()` and instantiating your custom queryset directly.
+
+The correct pattern is:
+```python
+from tenancy.managers import TenantManager
+from .querysets import ArticleQuerySet
+
+class ArticleManager(TenantManager):
+    def get_queryset(self):
+        qs = ArticleQuerySet(self.model, using=self._db)
+        if hasattr(self.model, "_is_tenant_model") and self.model._is_tenant_model():
+            return qs._apply_tenant_filter()
+        return qs
+
+from django.db import models
+from tenancy.mixins import TenantMixin
+
+class Article(TenantMixin, models.Model):
+    title = models.CharField(max_length=200)
+    is_published = models.BooleanField(default=False)
+    is_featured = models.BooleanField(default=False)
+
+    objects = ArticleManager()
+```
+
+With this setup, all of the following are tenant-safe and composable:
+```python
+Article.objects.published()
+Article.objects.featured().published()
+```
+
+### Why This Is Necessary
+
+In this package, tenant filtering is not a database feature and not a global Django setting. It is applied by:
+
+- The tenant-aware manager
+- The tenant-aware queryset
+
+If either of those layers is bypassed, tenant isolation is no longer guaranteed.
+
+This is why using a plain Django `QuerySet` or a manager that does not explicitly apply `_apply_tenant_filter()` is unsafe for tenant-aware models.
+
+### What Not to Do
+
+**Do not use `models.QuerySet` for tenant-aware models.**
+```python
+class ArticleQuerySet(models.QuerySet):
+    ...
+```
+
+Even if this appears to work in simple cases, it bypasses the tenant filtering logic and will eventually lead to incorrect or cross-tenant results.
+
+**Do not assume that `from_queryset()` will automatically wire in tenant behavior.** In this package, tenant scoping must be applied explicitly in `get_queryset()`.
+
+### When to Use QuerySet Methods vs Manager Methods
+
+As a general guideline:
+
+- Use queryset methods for reusable, chainable filtering logic
+- Use manager methods for entry points, shortcuts, or behavior that does not need to be chainable
+
+In practice, most tenant-safe query logic belongs on the queryset and is surfaced through a tenant-aware manager.
+
+## 5. Querying Outside the Request Context
+
+Tenant scoping is automatically applied during HTTP requests because the tenant context is set by middleware. Outside of a request context, however, no tenant is active by default.
+
+This is a deliberate design choice. When the system cannot safely infer tenant intent, it returns no data rather than risk cross-tenant access.
+
+Understanding how to work in these situations is essential for scripts, background jobs, signals, and tenant provisioning.
+
+### What "Outside the Request Context" Means
+
+The following environments do not have an active tenant context unless you explicitly set one:
+
+- Django shell
+- Management commands
+- Background workers (Celery, RQ, etc.)
+- Startup code
+- Standalone scripts
+- Signals triggered by non-request code
+
+In these situations, tenant-aware queries such as:
+```python
+Article.objects.all()
+```
+
+Will return an empty queryset.
+
+This is expected behavior.
+
+### Pattern 1: Activating a Tenant Context
+
+When you want code to behave as if it is running inside a tenant request, explicitly activate a tenant context.
+```python
+from tenancy.context import activate_tenant, deactivate_tenant
+from tenancy.models import Tenant
+from myapp.models import Article
+
+tenant = Tenant.objects.get(domain="tenant1.example.com")
+
+activate_tenant(tenant)
+try:
+    articles = Article.objects.filter(is_published=True)
+finally:
+    deactivate_tenant()
+```
+
+This is the preferred approach for:
+
+- Per-tenant background jobs
+- Maintenance scripts
+- Data migrations scoped to a single tenant
+- Tenant-specific signals or hooks
+
+Always ensure the tenant context is cleared using a try/finally block. Tenant context is thread-local and must not leak into unrelated work.
+
+### Pattern 2: Explicit Cross-Tenant Queries
+
+For administrative or provisioning tasks that intentionally operate across tenants, use the explicit escape hatch.
+```python
+Article.objects.all_tenants()
+```
+
+This bypasses tenant filtering entirely and returns rows from all tenants.
+
+You can then filter explicitly:
+```python
+Article.objects.all_tenants().filter(tenant=tenant)
+```
+
+This pattern is useful when iterating across tenants or performing system-wide checks.
+
+### Choosing the Right Pattern
+
+As a rule of thumb:
+
+- If your code is conceptually "running as a tenant," activate the tenant context.
+- If your code is conceptually "operating on the system," use `all_tenants()` and be explicit.
+
+Do not rely on implicit behavior in non-request code. Always make tenant intent obvious.
+
+### Common Pitfalls
+
+- Forgetting to activate a tenant and assuming data is missing
+- Using `all_tenants()` in application code where tenant scoping should apply
+- Activating a tenant context and failing to deactivate it
+- Running tenant-aware queries during bootstrap paths where middleware intentionally skips tenant resolution
+
+If something behaves differently inside a view than it does in a script, tenant context is almost always the reason.
+
+## 6. Tenant-Safe Uniqueness Constraints
+
+In a row-based multi-tenant system, global uniqueness is almost always wrong.
+
+A value that must be unique within a tenant must not be globally unique in the database. If you use `unique=True` incorrectly, tenant creation and cloning will eventually fail with integrity errors.
+
+This section explains how to define uniqueness correctly for tenant-aware models.
+
+### Why unique=True Is Dangerous in Multi-Tenancy
+
+In a traditional single-tenant Django app, this is common and safe:
+```python
+slug = models.SlugField(unique=True)
+```
+
+In a multi-tenant app, this enforces uniqueness across all tenants, not per tenant.
+
+That means:
+
+- Two different tenants cannot have the same slug
+- Cloning template data will fail on the second tenant
+- Errors appear at runtime, not at migration time
+
+This is almost never what you want.
+
+### The Correct Pattern: Tenant-Scoped Uniqueness
+
+For tenant-aware models, uniqueness must include the tenant field.
+
+Instead of `unique=True`, define a composite uniqueness constraint using `UniqueConstraint`.
+```python
+from django.db import models
+from tenancy.mixins import TenantMixin
+
+class Article(TenantMixin, models.Model):
+    slug = models.SlugField()
+    title = models.CharField(max_length=200)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["tenant", "slug"],
+                name="unique_article_slug_per_tenant",
+            )
+        ]
+```
+
+This enforces:
+
+- Each tenant can use the same slug values
+- Slugs are unique within a tenant
+- Cloning works correctly
+- Database integrity is preserved
+
+This is the only safe way to enforce per-tenant uniqueness.
+
+### When Global Uniqueness Is Appropriate
+
+Global uniqueness is appropriate only for models that are not tenant-aware, such as:
+
+- The Tenant model itself
+- Global configuration tables
+- System-wide lookup or reference data
+
+If a model inherits from `TenantMixin`, you should assume `unique=True` is incorrect unless you have a very specific reason.
+
+### System Checks and Early Warnings
+
+This package includes a Django system check that detects unsafe uniqueness patterns on tenant-aware models.
+
+If you declare `unique=True` on a field of a tenant-aware model, the check will warn you during startup so the issue can be fixed before it causes runtime failures.
+
+These warnings should be treated as errors during development.
+
+### How This Affects Cloning and Provisioning
+
+Tenant provisioning often involves cloning rows from a template tenant. If tenant-unsafe uniqueness constraints exist:
+
+- The first tenant may provision successfully
+- Subsequent tenants will fail with integrity errors
+- Failures may occur deep into the cloning process
+
+Correct tenant-scoped constraints prevent these failures entirely.
+
+### Quick Checklist
+
+Before moving on, ensure:
+
+- Tenant-aware models do not use `unique=True` for tenant-specific values
+- All per-tenant uniqueness is enforced with `UniqueConstraint`
+- The tenant field is always included in the constraint
+- System check warnings are resolved, not ignored
+
+---
+
+### The Tenant Model (OLD)
 
 Every tenant has:
 - **name**: Display name (e.g., "Acme Corporation")
@@ -543,7 +1060,17 @@ This will:
 
 ## Cloning System
 
-The package provides three cloning modes for flexible object provisioning.
+When you create a new tenant, you typically need more than a Tenant row. Most real applications require baseline rows such as navigation, settings, default pages, categories, roles, permissions, or other “starting state” data.
+
+This package includes a cloning system that can automatically populate tenant-scoped models during provisioning so each tenant starts from a consistent baseline. Cloning is intentionally flexible because different apps bootstrap data in different ways:
+
+Some apps want to copy a curated “template tenant” (a full starter dataset).
+
+Some apps want only a minimal skeleton of required rows, with fields left blank or set to safe defaults so the consuming project can fill them in later.
+
+Some apps want a mixture: copy some models from the template, skeletonize others, and exclude some entirely.
+
+Cloning runs outside the normal request flow, so tenant context and manager correctness matter. If you use custom managers/querysets on tenant models, they must remain tenant-aware or cloning can fail or behave unexpectedly.
 
 ### Mode 1: Full Clone (Default)
 
