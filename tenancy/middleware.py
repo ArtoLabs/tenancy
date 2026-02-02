@@ -5,13 +5,7 @@ from django.contrib.auth import logout
 from django.http import Http404, HttpResponse, HttpResponseNotFound
 from django.utils.deprecation import MiddlewareMixin
 
-from .context import (
-    clear_current_tenant,
-    set_current_tenant,
-    set_in_request,
-    set_tenant_required,
-    clear_request_flags,
-)
+from .context import clear_current_tenant, set_current_tenant
 from .models import Tenant
 from .roles import TenancyRole, roles
 
@@ -72,9 +66,6 @@ class TenantMiddleware(MiddlewareMixin):
     def process_request(self, request):
         clear_current_tenant()
 
-        # Mark that we're handling a request, and assume tenant is required
-        set_in_request(True)
-        set_tenant_required(True)
         # Extract hostname without port
         hostname = request.get_host().split(":")[0].lower()
 
@@ -95,8 +86,8 @@ class TenantMiddleware(MiddlewareMixin):
                     logger.info(
                         f"Path '{request.path}' matches skip pattern '{skip_path}', skipping tenant resolution"
                     )
-                    # Tenant is intentionally not required for these bootstrap paths
-                    set_tenant_required(False)
+                    # Don't set a tenant, allow the request to proceed.
+                    # Admin site's has_permission() will still check authentication/roles.
                     return None
 
         # For all other paths, tenant resolution is required
@@ -306,15 +297,12 @@ class TenantMiddleware(MiddlewareMixin):
         return TenancyRole.objects.filter(user=user).exists()
 
     def process_response(self, request, response):
-        # Clear tenant + request flags for this thread
         clear_current_tenant()
-        clear_request_flags()
         return response
 
     def process_exception(self, request, exception):
-        # Ensure cleanup even on errors
         clear_current_tenant()
-        clear_request_flags()
+        logger.exception(f"Exception in request processing: {exception}")
         return None
 
 

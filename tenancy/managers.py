@@ -1,12 +1,60 @@
 from django.db import models
-from django.conf import settings
+from .context import get_current_tenant
 
-from .context import get_current_tenant, in_request_context, is_tenant_required
+import warnings
 
-import logging
-import traceback
 
-logger = logging.getLogger(__name__)
+def warn_missing_tenant(model):
+    """
+    Print a loud, helpful warning when tenant-scoped queries occur without a tenant.
+    Does NOT raise; execution continues.
+    """
+    model_name = model.__name__
+    app_label = model._meta.app_label
+
+    warnings.warn(
+        (
+            "\n"
+            "==================== TENANCY WARNING ====================\n"
+            f"Tenant is None while querying a tenant-scoped model:\n"
+            f"  {app_label}.{model_name}\n"
+            "\n"
+            "This queryset is being forced to .none() for safety.\n"
+            "Most common cause:\n"
+            "  A form field (or other module-level code) created a queryset at import time.\n"
+            "\n"
+            f"Example of the problematic pattern:\n"
+            f"  field = forms.ModelChoiceField(queryset={model_name}.objects.all())\n"
+            "\n"
+            "Canonical Django fix (copy/paste):\n"
+            "\n"
+            "  # forms.py\n"
+            "  class MyForm(forms.Form):\n"
+            f"      person = forms.ModelChoiceField(queryset={model_name}.objects.none())\n"
+            "\n"
+            "      def __init__(self, *args, **kwargs):\n"
+            "          super().__init__(*args, **kwargs)\n"
+            f"          self.fields['person'].queryset = {model_name}.objects.all()\n"
+            "\n"
+            "If you need request-specific behavior, pass request into the form:\n"
+            "\n"
+            "  # view\n"
+            "  def get_form_kwargs(self):\n"
+            "      kwargs = super().get_form_kwargs()\n"
+            "      kwargs['request'] = self.request\n"
+            "      return kwargs\n"
+            "\n"
+            "  # form\n"
+            "  def __init__(self, *args, request=None, **kwargs):\n"
+            "      super().__init__(*args, **kwargs)\n"
+            f"      self.fields['person'].queryset = {model_name}.objects.all()\n"
+            "\n"
+            "This warning is non-fatal: the program will continue.\n"
+            "=========================================================\n"
+        ),
+        RuntimeWarning,
+        stacklevel=3,
+    )
 
 
 class TenantQuerySet(models.QuerySet):
@@ -30,6 +78,7 @@ class TenantQuerySet(models.QuerySet):
             tenant = get_current_tenant()
 
         if tenant is None:
+            warn_missing_tenant(self.model)
             return self.none()
 
         return self.filter(tenant=tenant)
@@ -65,35 +114,11 @@ class TenantQuerySet(models.QuerySet):
         if not hasattr(self.model, '_is_tenant_model') or not self.model._is_tenant_model():
             return self
 
-
+        # Get current tenant
         current_tenant = get_current_tenant()
         if current_tenant is None:
-            # During a real request, missing tenant context is a bug (unless tenant isn't required).
-            strict = getattr(settings, "TENANCY_STRICT_TENANT_CONTEXT", True)
-            in_request = in_request_context()
-            tenant_required = is_tenant_required()
-
-            logger.debug(
-                "Missing tenant context for model %s.%s: strict=%s, in_request=%s, tenant_required=%s",
-                getattr(self.model, "_meta", getattr(self.model, "__name__", "<unknown>")),
-                getattr(self.model, "__name__", "<unknown>"),
-                strict,
-                in_request,
-                tenant_required,
-            )
-
-            if strict and in_request and tenant_required:
-                # Log full help message and stack for debugging before raising
-                help_msg = _missing_tenant_help(self.model)
-                logger.error("Raising MissingTenantError for %s.%s: %s",
-                             getattr(self.model, "_meta", getattr(self.model, "__name__", "<unknown>")),
-                             getattr(self.model, "__name__", "<unknown>"),
-                             help_msg)
-                logger.debug("Stack trace:\n%s", "".join(traceback.format_stack()))
-                raise MissingTenantError(help_msg)
-
-            # Outside request context (startup/import/shell), keep safe behavior
-            logger.info("Returning empty queryset because tenant context is missing (non-request or non-strict).")
+            # No tenant context - return empty queryset for safety, but warn loudly
+            warn_missing_tenant(self.model)
             return self.none()
 
         # Check if already filtered by tenant
@@ -171,40 +196,3 @@ class TenantManager(models.Manager):
         Return all records across all tenants.
         """
         return TenantQuerySet(self.model, using=self._db).all_tenants()
-
-
-class MissingTenantError(RuntimeError):
-    pass
-
-
-def _missing_tenant_help(model) -> str:
-    model_name = model.__name__
-    app_label = model._meta.app_label
-
-    return (
-        f"Missing tenant context while handling a request.\n\n"
-        f"A tenant-scoped queryset was evaluated for: {app_label}.{model_name}\n\n"
-        f"Most common cause:\n"
-        f"  A form field declared at import time, e.g.\n"
-        f"    field = forms.ModelChoiceField(queryset={model_name}.objects.all())\n\n"
-        f"Canonical Django fix (copy/paste):\n\n"
-        f"  # forms.py\n"
-        f"  class MyForm(forms.Form):\n"
-        f"      person = forms.ModelChoiceField(queryset={model_name}.objects.none())\n\n"
-        f"      def __init__(self, *args, **kwargs):\n"
-        f"          super().__init__(*args, **kwargs)\n"
-        f"          self.fields['person'].queryset = {model_name}.objects.all()\n\n"
-        f"If you need request-specific behavior, pass request into the form:\n\n"
-        f"  # view\n"
-        f"  def get_form_kwargs(self):\n"
-        f"      kwargs = super().get_form_kwargs()\n"
-        f"      kwargs['request'] = self.request\n"
-        f"      return kwargs\n\n"
-        f"  # form\n"
-        f"  def __init__(self, *args, request=None, **kwargs):\n"
-        f"      super().__init__(*args, **kwargs)\n"
-        f"      self.fields['person'].queryset = {model_name}.objects.all()\n\n"
-        f"Checklist:\n"
-        f"  - Ensure TenantMiddleware is enabled and runs early.\n"
-        f"  - Ensure the request host resolves to an active Tenant.\n"
-    )
