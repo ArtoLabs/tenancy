@@ -1,16 +1,52 @@
 from django.db import models
 from .context import get_current_tenant
 
+import os
 import warnings
+import traceback
 
 
 def warn_missing_tenant(model):
     """
     Print a loud, helpful warning when tenant-scoped queries occur without a tenant.
+    Adds a best-effort pointer to the calling code location (file:line).
     Does NOT raise; execution continues.
     """
     model_name = model.__name__
     app_label = model._meta.app_label
+
+    # Best-effort: find the first stack frame that isn't inside the tenancy app itself.
+    stack = traceback.extract_stack()
+
+    # Paths we want to treat as "internal" and skip when searching for the trigger.
+    # This is intentionally conservative: we skip anything in the tenancy package directory.
+    tenancy_dir = os.path.dirname(__file__)  # directory containing managers.py
+    trigger_frame = None
+
+    # Walk backwards (closest call first)
+    for frame in reversed(stack):
+        filename = frame.filename
+
+        # Skip frames inside this tenancy package directory
+        if os.path.commonpath([tenancy_dir, os.path.abspath(filename)]) == os.path.abspath(tenancy_dir):
+            continue
+
+        # Optional: skip Django internals to get to user code quicker
+        # Comment this block out if you'd rather see the first non-tenancy frame, even if it's Django.
+        if ("site-packages" in filename and os.sep + "django" + os.sep in filename):
+            continue
+
+        trigger_frame = frame
+        break
+
+    if trigger_frame:
+        trigger_info = (
+            f"{trigger_frame.filename}:{trigger_frame.lineno} "
+            f"in {trigger_frame.name}\n"
+            f"  {trigger_frame.line or ''}"
+        )
+    else:
+        trigger_info = "Unknown (could not locate non-tenancy caller frame)"
 
     warnings.warn(
         (
@@ -18,6 +54,9 @@ def warn_missing_tenant(model):
             "==================== TENANCY WARNING ====================\n"
             f"Tenant is None while querying a tenant-scoped model:\n"
             f"  {app_label}.{model_name}\n"
+            "\n"
+            "Likely trigger (first non-tenancy caller frame):\n"
+            f"  {trigger_info}\n"
             "\n"
             "This queryset is being forced to .none() for safety.\n"
             "Most common cause:\n"
@@ -53,8 +92,10 @@ def warn_missing_tenant(model):
             "=========================================================\n"
         ),
         RuntimeWarning,
-        stacklevel=3,
+        # Keep stacklevel small since we're already printing our own best-effort location.
+        stacklevel=2,
     )
+
 
 
 class TenantQuerySet(models.QuerySet):
