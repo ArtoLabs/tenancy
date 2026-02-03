@@ -239,29 +239,28 @@ class TenantProvisioner:
 
         return preview
 
-    @staticmethod
-    def log_cloning_preview():
-        """
-        Log a preview of what will be cloned to the console.
-        """
-        preview = TenantProvisioner.get_cloning_preview()
+def log_cloning_preview():
+    """
+    Log a preview of what will be cloned to the console.
+    """
+    preview = TenantProvisioner.get_cloning_preview()
 
-        print("\n" + "=" * 60)
-        print("TENANT CLONING PREVIEW")
-        print("=" * 60 + "\n")
+    logger.info("\n" + "=" * 60)
+    logger.info("TENANT CLONING PREVIEW")
+    logger.info("=" * 60 + "\n")
 
-        if not preview:
-            print("⚠️  No template tenant found or no models to clone")
-            return
+    if not preview:
+        logger.info("⚠️  No template tenant found or no models to clone")
+        return
 
-        for info in preview:
-            mode_str = f"→ {info['mode']} clone"
-            print(f"{info['model']} ({info['count']} objects) {mode_str}")
+    for info in preview:
+        mode_str = f"→ {info['mode']} clone"
+        logger.info(f"{info['model']} ({info['count']} objects) {mode_str}")
 
-            if info['has_overrides']:
-                override_str = ", ".join(
-                    f"{k}={v}" for k, v in info['overrides'].items()
-                )
-                print(f"  ↳ Overrides: {override_str}")
+        if info['has_overrides']:
+            override_str = ", ".join(
+                f"{k}={v}" for k, v in info['overrides'].items()
+            )
+            logger.info(f"  ↳ Overrides: {override_str}")
 
-        print("\n" + "=" * 60 + "\n")
+    logger.info("\n" + "=" * 60 + "\n")

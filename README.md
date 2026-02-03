@@ -1539,7 +1539,6 @@ MIDDLEWARE = [
 ##### Step 4: Create MFA Views
 
 ```python
-# accounts/views.py
 from django.shortcuts import render, redirect
 from django_otp.plugins.otp_totp.models import TOTPDevice
 from django_otp import match_token
