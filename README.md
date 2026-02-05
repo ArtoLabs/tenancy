@@ -1,4 +1,4 @@
-# Django Multi-Tenancy Package
+# DJANGO ROW-BASED MULTI-TENANCY PACKAGE
 
 A comprehensive Django package for building multi-tenant applications with complete data isolation, role-based permissions, intelligent object cloning, and dual admin interfaces.
 
@@ -19,10 +19,11 @@ A comprehensive Django package for building multi-tenant applications with compl
 
 - [Installation](#installation)
 - [Quick Start](#quick-start)
-- [Configuration](#configuration)
+- [Configuration](#CONFIGURATION)
 - [Core Concepts](#core-concepts)
 - [Role-Based Permissions](#role-based-permissions)
 - [Cloning System](#cloning-system)
+- [Querysets in Forms](#querysets-in-forms)
 - [Admin Interfaces](#admin-interfaces)
 - [Advanced Usage](#advanced-usage)
 - [Tenant Provisioning Signal](#tenant-provisioning-signal)
@@ -31,7 +32,7 @@ A comprehensive Django package for building multi-tenant applications with compl
 
 ---
 
-## Installation
+# INSTALLATION
 
 Install directly from GitHub:
 
@@ -41,7 +42,7 @@ pip install git+https://github.com/ArtoLabs/tenancy.git
 
 ---
 
-## Quick Start
+# QUICK START
 
 ### 1. Add to Installed Apps
 
@@ -243,9 +244,13 @@ Enter system admin password: ••••••••
 
 ---
 
-## Configuration
+# CONFIGURATION
 
-### Settings
+[Return to the Table of Contents](#table-of-contents)
+
+---
+
+## Settings
 
 ```python
 # settings.py
@@ -299,7 +304,7 @@ LOGGING = {
 
 ```
 
-### Development Setup with Multiple Domains
+## Development Setup with Multiple Domains
 
 For local development, you'll need to configure your system to route different domains to localhost:
 
@@ -336,7 +341,11 @@ sudo brew services start dnsmasq
 
 ---
 
-# Core Concepts
+# CORE CONCEPTS
+
+[Return to the Table of Contents](#table-of-contents)
+
+---
 
 ## 1. Understanding the Tenant Context
 
@@ -490,7 +499,7 @@ A model is correctly tenant-aware if all of the following are true:
 
 If those conditions are met, the model is correctly isolated.
 
-## 3. Using the Tenant Manager (Required)
+## 3. Using the Tenant Manager
 
 Tenant isolation in this package is enforced entirely through a custom manager and queryset. For tenant-aware models, the manager is not an implementation detail. It is part of the tenancy contract.
 
@@ -855,7 +864,7 @@ Before moving on, ensure:
 
 ---
 
-### The Tenant Model (OLD)
+### The Tenant Model
 
 Every tenant has:
 - **name**: Display name (e.g., "Acme Corporation")
@@ -908,7 +917,11 @@ The **first tenant** created serves as the **template tenant**:
 
 ---
 
-## Role-Based Permissions
+# ROLE-BASED PERMISSIONS
+
+[Return to the Table of Contents](#table-of-contents)
+
+---
 
 The tenancy package uses a **self-contained role system** that is completely independent of Django's `is_superuser` and `is_staff` flags.
 
@@ -1058,7 +1071,11 @@ This will:
 
 ---
 
-## Cloning System
+# CLONING SYSTEM
+
+[Return to the Table of Contents](#table-of-contents)
+
+---
 
 When you create a new tenant, you typically need more than a Tenant row. Most real applications require baseline rows such as navigation, settings, default pages, categories, roles, permissions, or other “starting state” data.
 
@@ -1215,7 +1232,127 @@ This pattern allows you to:
 
 ---
 
-## Admin Interfaces
+# QUERYSETS IN FORMS
+
+[Return to the Table of Contents](#table-of-contents)
+
+---
+
+When using tenant-scoped models in Django forms, special care is needed to avoid issues related to tenant context.
+
+This tenancy app intentionally treats a missing tenant as "no data" for safety. If a tenant-scoped model is queried when no tenant has been set, the queryset is forced to `.none()`. This most commonly shows up when your project creates querysets during import time (module load), because at startup there is no active tenant yet. The app prints a warning to help you locate the exact line of code, but the right long-term fix is to structure your forms so tenant-scoped querysets are created at form initialization time, not at import time.
+
+## Key Rule
+
+**Never call `YourTenantModel.objects...` in a form field definition at the class level.**
+
+Use an empty placeholder queryset in the field definition, then set the real tenant-scoped queryset inside `__init__`, where tenant context exists. This applies to:
+- Plain `forms.Form` fields
+- `forms.ModelForm` fields
+- Any custom `ModelChoiceField` subclasses
+
+## Regular Forms
+
+### ❌ Avoid This Pattern
+
+This runs at import time:
+```python
+class MyForm(forms.Form):
+    person = forms.ModelChoiceField(queryset=Person.objects.all())
+```
+
+### ✅ Use This Pattern Instead
+
+Use an empty placeholder and populate it at runtime:
+```python
+class MyForm(forms.Form):
+    person = forms.ModelChoiceField(queryset=Person.objects.none(), required=False)
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.fields["person"].queryset = Person.objects.all()
+```
+
+### Filtering and Ordering
+
+If you need filtering or ordering, apply it in `__init__` as well:
+```python
+def __init__(self, *args, **kwargs):
+    super().__init__(*args, **kwargs)
+    self.fields["person"].queryset = Person.objects.filter(gender="F").order_by("first_name", "last_name")
+```
+
+## ModelForms
+
+For `forms.ModelForm`, there is an extra gotcha: relationship fields (FK and M2M) are auto-generated by Django at class construction time. If you let Django auto-create those fields and their default querysets, it can trigger the warning during import.
+
+### The Fix
+
+Explicitly override relationship fields with a safe empty placeholder queryset, then set the tenant-scoped queryset in `__init__`:
+```python
+class PersonForm(forms.ModelForm):
+    father = forms.ModelChoiceField(
+        queryset=Person.objects.all_tenants().none(),
+        required=False
+    )
+    mother = forms.ModelChoiceField(
+        queryset=Person.objects.all_tenants().none(),
+        required=False
+    )
+    spouses = forms.ModelMultipleChoiceField(
+        queryset=Person.objects.all_tenants().none(),
+        required=False
+    )
+
+    class Meta:
+        model = Person
+        fields = ["first_name", "last_name", "father", "mother", "spouses"]
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.fields["father"].queryset = Person.objects.filter(gender="M").order_by("first_name", "last_name")
+        self.fields["mother"].queryset = Person.objects.filter(gender="F").order_by("first_name", "last_name")
+        self.fields["spouses"].queryset = Person.objects.all().order_by("first_name", "last_name")
+```
+
+### Why `all_tenants().none()`?
+
+The placeholder uses `Model.objects.all_tenants().none()` for a specific reason: it avoids tenant evaluation during import while remaining empty so it cannot expose any cross-tenant data even if something were to render it before `__init__` runs. Then, at runtime, you replace it with the real tenant-scoped queryset using the normal tenant manager (`Model.objects...`).
+
+## Passing Request Context
+
+If you need access to request-specific context to decide what to show, pass the request (or any needed context) into the form from the view and still set the queryset inside `__init__`:
+
+### In the View
+```python
+def get_form_kwargs(self):
+    kwargs = super().get_form_kwargs()
+    kwargs["request"] = self.request
+    return kwargs
+```
+
+### In the Form
+```python
+def __init__(self, *args, request=None, **kwargs):
+    super().__init__(*args, **kwargs)
+    self.fields["person"].queryset = Person.objects.all()
+```
+
+## Troubleshooting
+
+If you see tenancy warnings during startup, treat them as a checklist:
+
+1. Find the line shown under "Likely trigger"
+2. Replace any class-level tenant-scoped querysets with an empty placeholder
+3. Move all tenant-scoped queryset assignment into the form's `__init__`
+
+---
+
+# ADMIN INTERFACES
+
+[Return to the Table of Contents](#table-of-contents)
+
+---
 
 The package provides **two separate admin sites** with different purposes and access controls:
 
@@ -1302,7 +1439,11 @@ class MyModelTenantAdmin(TenantAdminMixin, admin.ModelAdmin):
 
 ---
 
-## Advanced Usage
+# ADVANCED USAGE
+
+[Return to the Table of Contents](#table-of-contents)
+
+---
 
 ### Tenant-Safe Login for Custom Authentication Flows
 
@@ -1805,7 +1946,11 @@ tenant.deactivate()
 
 ---
 
-## Tenant Provisioning Signal
+# TENANT PROVISIONING SIGNAL
+
+[Return to the Table of Contents](#table-of-contents)
+
+---
 
 The package emits a `tenant_provisioned` signal after each tenant is fully created, allowing you to hook into the provisioning process for custom setup tasks.
 
@@ -1895,7 +2040,11 @@ SiteSettings.objects.all_tenants().update_or_create(
 ```
 ---
 
-## Troubleshooting
+# TROUBLESHOOTING
+
+[Return to the Table of Contents](#table-of-contents)
+
+---
 
 ### "No active tenant found for domain"
 
@@ -2016,7 +2165,11 @@ SiteSettings.objects.all_tenants().update_or_create(
 
 ---
 
-## Best Practices
+# BEST PRACTICES
+
+[Return to the Table of Contents](#table-of-contents)
+
+---
 
 ### 1. Role Management
 
@@ -2202,7 +2355,11 @@ def log_role_assignment(sender, instance, created, **kwargs):
 
 ---
 
-## Contributing
+# CONTRIBUTING
+
+[Return to the Table of Contents](#table-of-contents)
+
+---
 
 Contributions are welcome! Please:
 
@@ -2230,7 +2387,7 @@ For issues, questions, or contributions:
 
 ## Changelog
 
-### Version 2.0.0
+### Version 0.2.0
 - **Breaking**: Replaced Django's `is_superuser`/`is_staff` with dedicated tenancy roles
 - Added `TenancyRole` model for role-based access control
 - Added `tenantadmin` role (system-wide access)
@@ -2244,7 +2401,7 @@ For issues, questions, or contributions:
 - Fixed MFA integration example to properly call `super().has_permission()`
 - Improved separation of authentication and authorization in admin flow
 
-### Version 1.0.0
+### Version 0.1.0
 - Initial release
 - Multi-tenant data isolation
 - Dual admin interfaces

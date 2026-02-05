@@ -9,8 +9,8 @@ from django.utils.html import format_html
 from django.utils.translation import gettext as _
 from django.conf import settings
 from django.utils.module_loading import import_string
-from django.contrib.auth.views import redirect_to_login
-from django.core.exceptions import PermissionDenied
+from django.http import Http404
+
 
 from .models import Tenant
 from .forms import TenantCreationForm
@@ -31,6 +31,17 @@ class TenantAdminSite(AdminSite):
     site_header = "Tenant Administration"
     site_title = "Tenant Admin"
     index_title = "Welcome to your admin panel"
+
+    def admin_view(self, view, cacheable=False):
+        inner = super().admin_view(view, cacheable=cacheable)
+
+        def wrapped(request, *args, **kwargs):
+            # 404 for everyone not permitted (includes not authenticated)
+            if not self.has_permission(request):
+                raise Http404("Page not found")
+            return inner(request, *args, **kwargs)
+
+        return wrapped
 
     def has_permission(self, request):
         """
@@ -118,14 +129,9 @@ class SuperAdminSite(AdminSite):
         inner = super().admin_view(view, cacheable=cacheable)
 
         def wrapped(request, *args, **kwargs):
-            # authenticated but not allowed: 403, not login redirect
-            if request.user.is_authenticated and not self.has_permission(request):
-                raise PermissionDenied
-
-            # not authenticated: go to your real login page, not /admin/login/
-            if not request.user.is_authenticated:
-                return redirect_to_login(request.get_full_path(), settings.LOGIN_URL)
-
+            # 404 for everyone not permitted (includes not authenticated)
+            if not self.has_permission(request):
+                raise Http404("Page not found")
             return inner(request, *args, **kwargs)
 
         return wrapped
