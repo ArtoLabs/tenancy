@@ -15,6 +15,15 @@ logger = logging.getLogger(__name__)
 class TenantUserMixin(models.Model):
     """
     Mixin to add tenant field to custom user models.
+
+    This mixin now mirrors the behavior of TenantMixin by auto-binding the
+    current tenant (from middleware/thread-local context) when saving a new user
+    without an explicit tenant.
+
+    By default, if no tenant can be resolved, the user is allowed to remain
+    tenant=None (useful for platform-wide users like tenant admins).
+    If you want to enforce that *all* users must have a tenant in non-bootstrap
+    contexts, set TENANCY_REQUIRE_TENANT_ON_USER_SAVE=True.
     """
     tenant = models.ForeignKey(
         Tenant,
@@ -26,6 +35,33 @@ class TenantUserMixin(models.Model):
 
     class Meta:
         abstract = True
+
+    def save(self, *args, **kwargs):
+        if not getattr(self, 'tenant_id', None):
+            from .context import get_current_tenant
+            current_tenant = get_current_tenant()
+
+            if current_tenant is not None:
+                self.tenant = current_tenant
+            else:
+                # Optional strict mode: enforce tenant assignment for users.
+                if getattr(settings, "TENANCY_REQUIRE_TENANT_ON_USER_SAVE", False):
+                    if getattr(settings, "TENANCY_BOOTSTRAP", False):
+                        # In bootstrap mode, fall back to the first tenant if it exists.
+                        bootstrap_tenant = Tenant.objects.first()
+                        if bootstrap_tenant is None:
+                            raise ValueError(
+                                f"No tenants exist in the database to bootstrap {self.__class__.__name__}."
+                            )
+                        self.tenant = bootstrap_tenant
+                    else:
+                        raise ValueError(
+                            f"Cannot save {self.__class__.__name__} without an active tenant. "
+                            "Either set the tenant explicitly or ensure middleware is active."
+                        )
+
+        super().save(*args, **kwargs)
+
 
 
 class TenantMixin(models.Model):
