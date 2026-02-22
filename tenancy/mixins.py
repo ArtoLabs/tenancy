@@ -186,16 +186,12 @@ class TenantAdminMixin:
         return roles.is_tenant_manager(request.user, request.tenant)
 
     def has_add_permission(self, request):
-        """
-        Control add permission.
-
-        CHANGED: Tenant admins and tenant managers can both add.
-        """
-        # Allow if user has module permission
         if not self.has_module_permission(request):
             return False
-
-        return super().has_add_permission(request)
+        # Tenant managers may not add objects; only tenant admins can
+        if roles.is_tenant_admin(request.user):
+            return super().has_add_permission(request)
+        return False
 
     def has_delete_permission(self, request, obj=None):
         """
