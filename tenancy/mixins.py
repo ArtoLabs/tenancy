@@ -185,7 +185,7 @@ class TenantAdminMixin:
         # Tenant managers can only access their assigned tenant
         return roles.is_tenant_manager(request.user, request.tenant)
 
-    def has_add_permission(self, request):
+    def has_add_permission(self, request, obj=None):
         if not self.has_module_permission(request):
             return False
         # Tenant managers may not add objects; only tenant admins can
