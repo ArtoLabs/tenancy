@@ -259,7 +259,7 @@ class SuperUserAdminMixin:
 
     readonly_fields = ('tenant',)
 
-    def has_module_permission(self, request):
+    def has_module_permission(self, request, obj=None):
         """
         Check if user has permission to access this module in super admin.
 
@@ -272,7 +272,7 @@ class SuperUserAdminMixin:
         # ONLY tenant admins can access super admin site
         return roles.is_tenant_admin(request.user)
 
-    def has_add_permission(self, request):
+    def has_add_permission(self, request, obj=None):
         """
         Control add permission in super admin.
 
@@ -320,7 +320,7 @@ class SuperUserAdminMixin:
 
     tenant_display.short_description = "Tenant"
 
-    def get_list_display(self, request):
+    def get_list_display(self, request, obj=None):
         """
         Add tenant_display to list view.
         """
