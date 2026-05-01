@@ -283,9 +283,7 @@ class SuperUserAdminMixin:
         if not self.has_module_permission(request):
             return False
 
-        # For InlineModelAdmin, we need to pass obj parameter
-        # For regular ModelAdmin, obj parameter is ignored
-        return super().has_add_permission(request, obj)
+        return super().has_add_permission(request)
 
     def has_change_permission(self, request, obj=None):
         """
