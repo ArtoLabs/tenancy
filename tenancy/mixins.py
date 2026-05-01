@@ -190,7 +190,12 @@ class TenantAdminMixin:
             return False
         # Tenant managers may not add objects; only tenant admins can
         if roles.is_tenant_admin(request.user):
-            return super().has_add_permission(request)
+            # Check if this is an InlineModelAdmin (which requires obj parameter)
+            from django.contrib.admin import InlineModelAdmin
+            if isinstance(self, InlineModelAdmin):
+                return super().has_add_permission(request, obj)
+            else:
+                return super().has_add_permission(request)
         return False
 
     def has_delete_permission(self, request, obj=None):
@@ -281,7 +286,12 @@ class SuperUserAdminMixin:
         if not self.has_module_permission(request):
             return False
 
-        return super().has_add_permission(request)
+        # Check if this is an InlineModelAdmin (which requires obj parameter)
+        from django.contrib.admin import InlineModelAdmin
+        if isinstance(self, InlineModelAdmin):
+            return super().has_add_permission(request, obj)
+        else:
+            return super().has_add_permission(request)
 
     def has_change_permission(self, request, obj=None):
         """
