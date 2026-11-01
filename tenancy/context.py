@@ -28,3 +28,16 @@ def clear_current_tenant():
     """
     if hasattr(_thread_locals, "tenant"):
         delattr(_thread_locals, "tenant")
+
+
+def activate_tenant(tenant):
+    """
+    Make `tenant` the current tenant for this thread, e.g. in a management
+    command or background job. Pair it with deactivate_tenant() in a finally block.
+    """
+    set_current_tenant(tenant)
+
+
+def deactivate_tenant():
+    """Clear the current tenant set by activate_tenant()."""
+    clear_current_tenant()

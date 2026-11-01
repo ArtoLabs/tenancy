@@ -1,7 +1,7 @@
 from django.contrib.auth import login as django_login
 from django.conf import settings
 
-from .services_auth import can_user_authenticate_on_tenant  # or wherever you put the new authz functions
+from .services import can_user_authenticate_on_tenant
 
 
 def tenancy_login(request, user) -> bool:

@@ -2,6 +2,7 @@ import logging
 
 from django.conf import settings
 from django.contrib.auth import logout
+from django.core.exceptions import PermissionDenied
 from django.http import Http404, HttpResponse, HttpResponseNotFound
 from django.utils.deprecation import MiddlewareMixin
 
@@ -34,8 +35,7 @@ class RequestTenancyAccess:
         return roles.is_tenant_manager(user, self.tenant)
 
     def can_authenticate_email(self, email: str):
-        # Optional: if you’ve implemented can_identity_authenticate_on_tenant()
-        # in tenancy/services_auth.py, you can delegate to it here.
+        # Same rules as tenancy.services.can_identity_authenticate_on_tenant()
         from django.contrib.auth import get_user_model
 
         email_norm = (email or "").strip()
@@ -301,8 +301,14 @@ class TenantMiddleware(MiddlewareMixin):
         return response
 
     def process_exception(self, request, exception):
-        clear_current_tenant()
-        logger.exception(f"Exception in request processing: {exception}")
+        # Leave the tenant active: Django renders the 404/500 page after this,
+        # and the page may query tenant-scoped models (menus, footers, etc.).
+        # process_response clears it once that page has been rendered.
+
+        # 404s and 403s are normal responses that Django already logs as
+        # warnings; only log what is actually an error.
+        if not isinstance(exception, (Http404, PermissionDenied)):
+            logger.exception(f"Exception in request processing: {exception}")
         return None
 
 

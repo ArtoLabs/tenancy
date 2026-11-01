@@ -1025,7 +1025,7 @@ When creating a tenant via the super admin interface, the initial admin user is 
 Use the diagnostic command to check a user's permissions:
 
 ```bash
-python manage.py debug_tenancy_permissions <username>
+python manage.py debug_permissions <username>
 ```
 
 **Example output:**
@@ -1049,25 +1049,6 @@ Access Check by Tenant:
     Access: NO
     Expected: 404 Not Found
 ```
-
-### Migration from Django Auth
-
-If you're upgrading from a version that used Django's `is_superuser` and `is_staff`, use the migration command:
-
-```bash
-# First, do a dry run to see what will happen
-python manage.py migrate_tenancy_permissions --dry-run
-
-# If everything looks good, run the actual migration
-python manage.py migrate_tenancy_permissions
-```
-
-This will:
-- Convert all `is_superuser=True` users → `tenantadmin` role
-- Convert all `is_staff=True` users with a tenant → `tenantmanager` role for their tenant
-- Flag any staff users without a tenant for manual review
-
-**Note**: After migration, the `is_superuser` and `is_staff` flags are no longer used for tenancy permissions and can be used for other purposes in your application.
 
 ---
 
@@ -1860,7 +1841,7 @@ from tenancy.services import TenantProvisioner, TenantProvisioningError
 from tenancy.roles import roles, TenancyRole
 
 try:
-    tenant, user, clone_map = TenantProvisioner.create_tenant(
+    tenant, user = TenantProvisioner.create_tenant(
         tenant_data={
             'name': 'Acme Corporation',
             'domain': 'acme.example.com',
@@ -1876,12 +1857,7 @@ try:
     # The user is automatically assigned tenantmanager role
     # But you can assign additional roles:
     roles.assign_role(user, TenancyRole.TENANT_ADMIN, None)
-    
-    # Access cloned objects
-    from myapp.models import Theme
-    for old_id, new_theme in clone_map[Theme].items():
-        print(f"Cloned Theme {old_id} -> {new_theme.id}")
-        
+
 except TenantProvisioningError as e:
     print(f"Failed to create tenant: {e}")
 ```
@@ -1902,15 +1878,16 @@ for info in preview:
         print(f"  Overrides: {info['overrides']}")
 
 # Or use the formatted logger
-TenantProvisioner.log_cloning_preview()
+from tenancy.services import log_cloning_preview
+log_cloning_preview()
 ```
 
 ### Accessing Clone Map
 
-The clone map provides old ID → new instance mappings:
+`create_tenant_with_custom_overrides()` also returns a clone map of old ID → new instance mappings (`create_tenant()` returns only the tenant and user):
 
 ```python
-tenant, user, clone_map = TenantProvisioner.create_tenant(tenant_data, admin_data)
+tenant, user, clone_map = TenantProvisioner.create_tenant_with_custom_overrides(tenant_data, admin_data)
 
 # clone_map structure: {Model: {old_id: new_instance}}
 from myapp.models import Product
@@ -2094,7 +2071,7 @@ SiteSettings.objects.all_tenants().update_or_create(
 
 4. Check roles with diagnostic command:
    ```bash
-   python manage.py debug_tenancy_permissions username
+   python manage.py debug_permissions username
    ```
 
 ### Tenant Manager Can Access Wrong Tenant
@@ -2104,7 +2081,7 @@ SiteSettings.objects.all_tenants().update_or_create(
 **Solutions**:
 1. Check role assignments:
    ```bash
-   python manage.py debug_tenancy_permissions username
+   python manage.py debug_permissions username
    ```
 
 2. Verify they don't have multiple `tenantmanager` roles:
@@ -2127,7 +2104,7 @@ SiteSettings.objects.all_tenants().update_or_create(
 **Solutions**:
 1. Check if they have `tenantadmin` role:
    ```bash
-   python manage.py debug_tenancy_permissions username
+   python manage.py debug_permissions username
    ```
 
 2. Revoke `tenantadmin` role if present:
@@ -2387,14 +2364,20 @@ For issues, questions, or contributions:
 
 ## Changelog
 
+### Version 0.8.1
+- Fixed: the current tenant is no longer cleared when a view raises, so 404/500 pages can still use tenant-scoped models; it is cleared after the response as before
+- Fixed: `TenantMiddleware` no longer logs `Http404` and `PermissionDenied` as errors
+- Fixed: `tenancy.auth` (`tenancy_login`) imported a module that does not exist
+- Added `activate_tenant()` and `deactivate_tenant()` to `tenancy.context`, as documented
+- README: corrected command names, `create_tenant()` return value and `log_cloning_preview()` usage
+
 ### Version 0.2.0
 - **Breaking**: Replaced Django's `is_superuser`/`is_staff` with dedicated tenancy roles
 - Added `TenancyRole` model for role-based access control
 - Added `tenantadmin` role (system-wide access)
 - Added `tenantadmin` role (tenant-specific access)
 - Added role management utilities (`roles` manager)
-- Added `debug_tenancy_permissions` management command
-- Added `migrate_tenancy_permissions` command for upgrading
+- Added `debug_permissions` management command
 - Added `bootstrap_first_tenant` command for initial setup
 - Removed `is_superadmin` field from `TenantUserMixin`
 - Updated admin site permission checks to use roles
